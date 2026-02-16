@@ -2,35 +2,127 @@ import AppKit
 import ServiceManagement
 import SwiftUI
 import OSLog
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppSettingsStore: ObservableObject {
+    struct DiagnosticsFile: Identifiable {
+        let id: String
+        let name: String
+        let modifiedText: String
+        let sizeText: String
+        let url: URL
+    }
+
     static let shared = AppSettingsStore()
 
     @Published var launchInBackground: Bool {
         didSet {
-            UserDefaults.standard.set(launchInBackground, forKey: Self.launchInBackgroundKey)
+            guard !isSyncingFromConfig else { return }
+            persistLaunchPreference()
         }
     }
     @Published private(set) var startOnLoginEnabled: Bool
     @Published private(set) var startOnLoginErrorMessage: String?
+    @Published private(set) var hasCompletedOnboarding: Bool
+    @Published private(set) var onboardingActionMessage: String?
+    @Published private(set) var configActionMessage: String?
+    @Published private(set) var diagnosticsActionMessage: String?
+    @Published private(set) var diagnosticsFiles: [DiagnosticsFile] = []
 
-    private static let launchInBackgroundKey = "LaunchInBackground.v1"
+    private let logger = Logger(subsystem: "com.localports.app", category: "AppSettingsStore")
+    private let configStore = AppConfigStore.shared
+    private let fileManager = FileManager.default
+    private var isSyncingFromConfig = false
+
+    private lazy var diagnosticsDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    private lazy var byteCountFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.includesUnit = true
+        return formatter
+    }()
 
     private init() {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: Self.launchInBackgroundKey) == nil {
-            launchInBackground = true
-            defaults.set(true, forKey: Self.launchInBackgroundKey)
-        } else {
-            launchInBackground = defaults.bool(forKey: Self.launchInBackgroundKey)
-        }
+        let config = configStore.loadOrCreateConfig(
+            defaultBuiltInServices: PortsViewModel.defaultBuiltInServices,
+            legacyCompatibilityUntilVersion: LegacyMigrationService.legacyCompatibilityUntilVersion
+        )
+
+        launchInBackground = config.appSettings.launchInBackground
+        hasCompletedOnboarding = config.hasCompletedOnboarding
 
         if #available(macOS 13.0, *) {
             startOnLoginEnabled = (SMAppService.mainApp.status == .enabled)
         } else {
             startOnLoginEnabled = false
         }
+
+        refreshDiagnostics()
+    }
+
+    func refreshFromConfig() {
+        let config = configStore.loadOrCreateConfig(
+            defaultBuiltInServices: PortsViewModel.defaultBuiltInServices,
+            legacyCompatibilityUntilVersion: LegacyMigrationService.legacyCompatibilityUntilVersion
+        )
+        syncFromConfig(config)
+    }
+
+    func exportConfiguration() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "LocalPorts-config.json"
+        panel.canCreateDirectories = true
+        panel.prompt = "Export"
+
+        guard panel.runModal() == .OK, let destinationURL = panel.url else {
+            return
+        }
+
+        do {
+            try configStore.exportConfig(to: destinationURL)
+            configActionMessage = "Configuration exported to \(destinationURL.lastPathComponent)."
+        } catch {
+            logger.error("Failed to export config: \(error.localizedDescription, privacy: .public)")
+            configActionMessage = "Could not export configuration: \(error.localizedDescription)"
+        }
+    }
+
+    func importConfiguration() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.prompt = "Import"
+
+        guard panel.runModal() == .OK, let sourceURL = panel.url else {
+            return
+        }
+
+        do {
+            let imported = try configStore.importConfig(
+                from: sourceURL,
+                defaultBuiltInServices: PortsViewModel.defaultBuiltInServices
+            )
+            syncFromConfig(imported)
+            configActionMessage = "Configuration imported from \(sourceURL.lastPathComponent)."
+        } catch {
+            logger.error("Failed to import config: \(error.localizedDescription, privacy: .public)")
+            configActionMessage = "Could not import configuration: \(error.localizedDescription)"
+        }
+    }
+
+    func openConfigDirectory() {
+        let configPath = configStore.configFilePath()
+        let configURL = URL(fileURLWithPath: configPath)
+        NSWorkspace.shared.activateFileViewerSelecting([configURL])
     }
 
     func setStartOnLogin(_ enabled: Bool) {
@@ -51,6 +143,108 @@ final class AppSettingsStore: ObservableObject {
             startOnLoginEnabled = (SMAppService.mainApp.status == .enabled)
             startOnLoginErrorMessage = "Could not update login item: \(error.localizedDescription)"
         }
+    }
+
+    func showOnboardingAgain() {
+        do {
+            let updated = try configStore.update { config in
+                config.hasCompletedOnboarding = false
+            }
+            hasCompletedOnboarding = updated.hasCompletedOnboarding
+            onboardingActionMessage = "Onboarding guide will appear the next time you open the services panel."
+        } catch {
+            logger.error("Failed to reset onboarding from settings: \(error.localizedDescription, privacy: .public)")
+            onboardingActionMessage = "Could not reset onboarding guide."
+        }
+    }
+
+    func refreshDiagnostics() {
+        let logsURL = diagnosticsDirectoryURL()
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: logsURL,
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            diagnosticsFiles = []
+            return
+        }
+
+        let rows = files
+            .filter { $0.pathExtension.lowercased() == "log" }
+            .map { url -> (url: URL, modifiedAt: Date, fileSize: Int64) in
+                let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+                return (
+                    url,
+                    values?.contentModificationDate ?? .distantPast,
+                    Int64(values?.fileSize ?? 0)
+                )
+            }
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+            .prefix(8)
+
+        diagnosticsFiles = rows.map { item in
+            DiagnosticsFile(
+                id: item.url.path,
+                name: item.url.lastPathComponent,
+                modifiedText: diagnosticsDateFormatter.string(from: item.modifiedAt),
+                sizeText: byteCountFormatter.string(fromByteCount: item.fileSize),
+                url: item.url
+            )
+        }
+    }
+
+    func openDiagnosticsFolder() {
+        let logsURL = diagnosticsDirectoryURL()
+
+        do {
+            try fileManager.createDirectory(at: logsURL, withIntermediateDirectories: true)
+        } catch {
+            logger.error("Failed to create diagnostics directory: \(error.localizedDescription, privacy: .public)")
+        }
+
+        NSWorkspace.shared.open(logsURL)
+    }
+
+    func openDiagnosticsFile(_ file: DiagnosticsFile) {
+        NSWorkspace.shared.open(file.url)
+    }
+
+    func clearDiagnostics() {
+        let logsURL = diagnosticsDirectoryURL()
+        do {
+            let files = try fileManager.contentsOfDirectory(at: logsURL, includingPropertiesForKeys: nil)
+            for file in files where file.pathExtension.lowercased() == "log" {
+                try? fileManager.removeItem(at: file)
+            }
+            refreshDiagnostics()
+            diagnosticsActionMessage = "Diagnostics logs cleared."
+        } catch {
+            logger.error("Failed to clear diagnostics logs: \(error.localizedDescription, privacy: .public)")
+            diagnosticsActionMessage = "Could not clear diagnostics logs."
+        }
+    }
+
+    private func syncFromConfig(_ config: AppConfig) {
+        isSyncingFromConfig = true
+        launchInBackground = config.appSettings.launchInBackground
+        isSyncingFromConfig = false
+
+        hasCompletedOnboarding = config.hasCompletedOnboarding
+    }
+
+    private func persistLaunchPreference() {
+        do {
+            _ = try configStore.update { config in
+                config.appSettings.launchInBackground = launchInBackground
+            }
+        } catch {
+            logger.error("Failed to persist launch preference: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func diagnosticsDirectoryURL() -> URL {
+        fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/LocalPorts", isDirectory: true)
     }
 }
 
@@ -191,6 +385,7 @@ final class StatusBarController: NSObject {
     @objc
     private func openSettings(_ sender: Any?) {
         NSApp.activate(ignoringOtherApps: true)
+        AppSettingsStore.shared.refreshFromConfig()
         showSettingsWindow()
     }
 
@@ -251,6 +446,10 @@ struct SettingsPanelView: View {
         return "\(version) (\(build))"
     }
 
+    private var configFilePath: String {
+        AppConfigStore.shared.configFilePath()
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("LocalPorts Settings")
@@ -292,6 +491,108 @@ struct SettingsPanelView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            GroupBox("Onboarding") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(settings.hasCompletedOnboarding
+                        ? "The first-run onboarding is currently completed for this Mac user."
+                        : "Onboarding is currently enabled and will be shown in the services panel.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button("Show onboarding again") {
+                        settings.showOnboardingAgain()
+                    }
+                    .disabled(!settings.hasCompletedOnboarding)
+
+                    if let onboardingMessage = settings.onboardingActionMessage {
+                        Text(onboardingMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Configuration Backup") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Button("Export") {
+                            settings.exportConfiguration()
+                        }
+
+                        Button("Import") {
+                            settings.importConfiguration()
+                        }
+
+                        Button("Show Config File") {
+                            settings.openConfigDirectory()
+                        }
+                    }
+
+                    Text(configFilePath)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+
+                    if let configMessage = settings.configActionMessage {
+                        Text(configMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Diagnostics Logs") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Button("Refresh") {
+                            settings.refreshDiagnostics()
+                        }
+
+                        Button("Open Folder") {
+                            settings.openDiagnosticsFolder()
+                        }
+
+                        Button("Clear") {
+                            settings.clearDiagnostics()
+                        }
+                    }
+
+                    if settings.diagnosticsFiles.isEmpty {
+                        Text("No diagnostics logs found yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(settings.diagnosticsFiles) { file in
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(file.name)
+                                        .font(.caption.weight(.semibold))
+                                    Text("\(file.modifiedText) · \(file.sizeText)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer()
+
+                                Button("Open") {
+                                    settings.openDiagnosticsFile(file)
+                                }
+                            }
+                        }
+                    }
+
+                    if let diagnosticsMessage = settings.diagnosticsActionMessage {
+                        Text(diagnosticsMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             GroupBox("Quick Guide") {
                 VStack(alignment: .leading, spacing: 8) {
                     guideLine("Left-click the menu bar icon to open your services.")
@@ -317,8 +618,12 @@ struct SettingsPanelView: View {
             LabeledContent("Mode", value: "Menu Bar")
         }
         .padding(20)
-        .frame(width: 520, alignment: .leading)
+        .frame(width: 560, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
+        .onAppear {
+            settings.refreshFromConfig()
+            settings.refreshDiagnostics()
+        }
     }
 
     private func guideLine(_ text: String) -> some View {

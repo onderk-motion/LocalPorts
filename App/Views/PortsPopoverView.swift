@@ -8,6 +8,9 @@ struct PortsPopoverView: View {
     @State private var renameDraft: String = ""
     @State private var showAddServiceSheet = false
     @State private var editingServiceData: PortsViewModel.ServiceEditorData?
+    @State private var showCreateProfileSheet = false
+    @State private var showRenameProfileSheet = false
+    @State private var showDeleteProfileAlert = false
     @FocusState private var renameFocused: Bool
 
     var body: some View {
@@ -28,9 +31,14 @@ struct PortsPopoverView: View {
                     statusBanner(message)
                 }
 
+                if !viewModel.hasCompletedOnboarding {
+                    onboardingCard
+                }
+
                 ScrollView(.vertical, showsIndicators: true) {
                     servicesSection
                 }
+
                 footer
             }
             .padding(14)
@@ -47,6 +55,32 @@ struct PortsPopoverView: View {
                 viewModel: viewModel,
                 serviceData: data
             )
+        }
+        .sheet(isPresented: $showCreateProfileSheet) {
+            ProfileNameSheet(
+                title: "Create Profile",
+                actionTitle: "Create",
+                initialName: ""
+            ) { newName in
+                try viewModel.createProfile(named: newName)
+            }
+        }
+        .sheet(isPresented: $showRenameProfileSheet) {
+            ProfileNameSheet(
+                title: "Rename Profile",
+                actionTitle: "Save",
+                initialName: viewModel.activeProfileName
+            ) { updatedName in
+                try viewModel.renameActiveProfile(to: updatedName)
+            }
+        }
+        .alert("Delete current profile?", isPresented: $showDeleteProfileAlert) {
+            Button("Delete", role: .destructive) {
+                try? viewModel.deleteActiveProfile()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes saved services in \"\(viewModel.activeProfileName)\". This action cannot be undone.")
         }
     }
 
@@ -78,14 +112,111 @@ struct PortsPopoverView: View {
         }
     }
 
+    private var onboardingCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Welcome to LocalPorts")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+
+            Text("Use + to add your projects, then use Start/Stop buttons to control them. Right-click the menu bar icon for Settings.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.78))
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button("Got It") {
+                viewModel.completeOnboarding()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.white.opacity(0.25))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        )
+    }
+
     private var servicesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("My Services")
+            profileSection
+            sectionTitle("Services")
 
             ForEach(viewModel.serviceSnapshots) { service in
                 serviceCard(service)
             }
         }
+    }
+
+    private var profileSection: some View {
+        HStack(spacing: 8) {
+            Text("Profile")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.74))
+
+            Spacer()
+
+            Menu {
+                ForEach(viewModel.profileSummaries) { profile in
+                    Button {
+                        viewModel.switchProfile(profile.id)
+                    } label: {
+                        if profile.id == viewModel.activeProfileID {
+                            Label(profile.name, systemImage: "checkmark")
+                        } else {
+                            Text(profile.name)
+                        }
+                    }
+                }
+
+                Divider()
+
+                Button("New Profile…") {
+                    showCreateProfileSheet = true
+                }
+
+                Button("Rename Current…") {
+                    showRenameProfileSheet = true
+                }
+
+                Button("Delete Current…", role: .destructive) {
+                    showDeleteProfileAlert = true
+                }
+                .disabled(viewModel.profileSummaries.count <= 1)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.crop.circle")
+                        .font(.caption.weight(.semibold))
+                    Text(viewModel.activeProfileName)
+                        .font(.caption.weight(.semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(0.14))
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 
     private var footer: some View {
@@ -131,7 +262,12 @@ struct PortsPopoverView: View {
             }
 
             HStack(alignment: .center, spacing: 8) {
-                Text(verbatim: "\(service.url) · \(viewModel.stateText(for: service.state))")
+                Circle()
+                    .fill(healthIndicatorColor(for: service.health, isRunning: isRunning))
+                    .frame(width: 8, height: 8)
+                    .help(viewModel.healthText(for: service.health))
+
+                Text(verbatim: viewModel.statusSummary(for: service))
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.68))
                     .lineLimit(1)
@@ -300,6 +436,23 @@ struct PortsPopoverView: View {
         )
     }
 
+    private func healthIndicatorColor(for health: PortsViewModel.ServiceHealthState, isRunning: Bool) -> Color {
+        guard isRunning else {
+            return .white.opacity(0.22)
+        }
+
+        switch health {
+        case .healthy:
+            return .green.opacity(0.95)
+        case .checking:
+            return .yellow.opacity(0.92)
+        case .unhealthy, .failed:
+            return .red.opacity(0.92)
+        case .unavailable:
+            return .white.opacity(0.35)
+        }
+    }
+
     private func iconButton(systemName: String, tint: Color = .white.opacity(0.88), action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
@@ -351,6 +504,7 @@ private struct AddServiceSheet: View {
 
     @State private var name: String = ""
     @State private var address: String = "http://localhost:"
+    @State private var healthCheckURL: String = ""
     @State private var workingDirectory: String = ""
     @State private var startCommand: String = ""
     @State private var errorMessage: String?
@@ -362,6 +516,7 @@ private struct AddServiceSheet: View {
 
             field("Name", text: $name, placeholder: "My API")
             field("Address", text: $address, placeholder: "http://localhost:3000")
+            field("Health Check URL (Optional)", text: $healthCheckURL, placeholder: "http://localhost:3000/health")
             projectFolderField
             field("Start Command (Optional)", text: $startCommand, placeholder: "npm run dev")
 
@@ -442,6 +597,7 @@ private struct AddServiceSheet: View {
             try viewModel.addCustomService(
                 name: name,
                 address: address,
+                healthCheckURL: healthCheckURL,
                 workingDirectory: workingDirectory,
                 startCommand: startCommand
             )
@@ -458,6 +614,7 @@ private struct EditServiceSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var address: String
+    @State private var healthCheckURL: String
     @State private var workingDirectory: String
     @State private var startCommand: String
     @State private var errorMessage: String?
@@ -466,6 +623,7 @@ private struct EditServiceSheet: View {
         self.viewModel = viewModel
         self.serviceData = serviceData
         _address = State(initialValue: serviceData.address)
+        _healthCheckURL = State(initialValue: serviceData.healthCheckURL)
         _workingDirectory = State(initialValue: serviceData.workingDirectory)
         _startCommand = State(initialValue: serviceData.startCommand)
     }
@@ -480,6 +638,7 @@ private struct EditServiceSheet: View {
                 .foregroundStyle(.secondary)
 
             field("Address", text: $address, placeholder: "http://localhost:3000")
+            field("Health Check URL (Optional)", text: $healthCheckURL, placeholder: "http://localhost:3000/health")
             projectFolderField
             field("Start Command (Optional)", text: $startCommand, placeholder: "npm run dev")
 
@@ -560,9 +719,80 @@ private struct EditServiceSheet: View {
             try viewModel.updateService(
                 id: serviceData.id,
                 address: address,
+                healthCheckURL: healthCheckURL,
                 workingDirectory: workingDirectory,
                 startCommand: startCommand
             )
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct ProfileNameSheet: View {
+    let title: String
+    let actionTitle: String
+    let initialName: String
+    let onSubmit: (String) throws -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var errorMessage: String?
+
+    init(
+        title: String,
+        actionTitle: String,
+        initialName: String,
+        onSubmit: @escaping (String) throws -> Void
+    ) {
+        self.title = title
+        self.actionTitle = actionTitle
+        self.initialName = initialName
+        self.onSubmit = onSubmit
+        _name = State(initialValue: initialName)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Name")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                TextField("Profile name", text: $name)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button(actionTitle) {
+                    submit()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(width: 380)
+    }
+
+    private func submit() {
+        do {
+            try onSubmit(name)
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

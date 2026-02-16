@@ -41,11 +41,17 @@ Current app metadata:
   - `Quit`
 
 ### Services Panel
-- Lists saved services under `My Services`.
+- Lists saved services under `Services` within the active profile.
+- Profile menu supports:
+  - switch profile
+  - create profile
+  - rename current profile
+  - delete current profile (when more than one exists)
 - Each card shows:
   - name
   - URL
   - runtime state (`Running`, `Stopped`, `Starting`, `Stopping`, `Error`)
+  - health indicator (`Healthy`, `Checking`, `Unhealthy`) while running
 - Card actions:
   - `Open` (browser)
   - `Copy URL`
@@ -63,10 +69,12 @@ Current app metadata:
 - Add custom service via `+` button.
 - Edit existing service via card menu `Edit`.
 - Folder selection supports Finder picker (`Browse...`).
+- Optional per-service health check URL can be configured.
 
 Validation rules:
 - service name required (for new custom service)
 - address must be valid and include explicit port
+- health check address is optional, but if provided it must be localhost with explicit port
 - only `localhost`, `127.0.0.1`, `::1` hosts are allowed
 - port must be unique across saved services
 - `Project Folder` and `Start Command` must be provided together
@@ -74,9 +82,16 @@ Validation rules:
 ### Startup and Background Behavior
 - App periodically refreshes listening ports every 2 seconds.
 - On launch, startable saved services can be auto-started if not already running.
+- Health checks run on active services at a throttled interval.
 - Optional launch behavior:
   - `Start LocalPorts app on login`
   - `Launch in the background`
+- If onboarding is not completed, services popover opens on launch once.
+
+### Configuration Backup
+- Export the full app configuration to a JSON file from Settings.
+- Import configuration JSON from Settings; imported content is sanitized before being saved.
+- Quick access to the active config file is available via `Show Config File`.
 
 ### Diagnostics for Start Failures
 When a start command fails (or exits immediately), LocalPorts writes diagnostics to:
@@ -155,23 +170,38 @@ Available options:
 
 Settings panel also includes:
 - startup explanations
+- onboarding reset button (`Show onboarding again`)
+- configuration backup tools (`Export`, `Import`, `Show Config File`)
+- diagnostics log tools (`Refresh`, `Open Folder`, `Clear`, per-file `Open`)
 - quick usage guide
 - tips
 - version and mode information
 
 ## 7. Data Persistence
 
-LocalPorts stores data in `UserDefaults`.
+LocalPorts now stores runtime configuration in a versioned JSON file:
+- `~/Library/Application Support/com.localports.app/config.v1.json`
+- automatic backup: `config.v1.json.bak`
 
-Keys used:
+Config includes:
+- app settings (for example `launchInBackground`)
+- onboarding completion state
+- selected profile id
+- all profiles and their services
+- per-service custom display names
+- optional per-service health check URL
+- migration metadata
+
+You can export and import this JSON from Settings (`Configuration Backup`). Imported files are sanitized (missing built-ins are restored, invalid profile references are corrected).
+
+### Legacy Migration
+On first run after this change, LocalPorts automatically migrates legacy `UserDefaults` keys into `config.v1.json`:
 - `PinnedServiceNames.v1`
-  - custom display names (`[serviceID: customName]`)
 - `CustomServices.v1`
-  - serialized custom service configurations
 - `BuiltInServiceOverrides.v1`
-  - serialized edited values for built-in service configurations
 - `LaunchInBackground.v1`
-  - Boolean for launch behavior
+
+Legacy compatibility metadata is written to config and kept for a limited compatibility window.
 
 ## 8. Project Structure
 

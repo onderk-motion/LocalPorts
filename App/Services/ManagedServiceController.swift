@@ -7,6 +7,7 @@ struct ManagedServiceConfiguration: Sendable, Codable, Hashable {
     let workingDirectory: String?
     let port: Int
     let urlString: String
+    let healthCheckURLString: String?
     let startCommand: [String]?
     let isBuiltIn: Bool
 
@@ -20,6 +21,7 @@ struct ManagedServiceConfiguration: Sendable, Codable, Hashable {
         workingDirectory: nil,
         port: 5173,
         urlString: "http://localhost:5173",
+        healthCheckURLString: nil,
         startCommand: nil,
         isBuiltIn: true
     )
@@ -30,6 +32,7 @@ struct ManagedServiceConfiguration: Sendable, Codable, Hashable {
         workingDirectory: nil,
         port: 5175,
         urlString: "http://localhost:5175",
+        healthCheckURLString: nil,
         startCommand: nil,
         isBuiltIn: true
     )
@@ -40,6 +43,7 @@ struct ManagedServiceConfiguration: Sendable, Codable, Hashable {
         workingDirectory: nil,
         port: 5120,
         urlString: "http://localhost:5120",
+        healthCheckURLString: nil,
         startCommand: nil,
         isBuiltIn: true
     )
