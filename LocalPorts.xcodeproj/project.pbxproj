@@ -1,0 +1,313 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B00100000000000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10200000000000000000001 /* AppDelegate.swift */; };
+		B00100000000000000000002 /* LocalPortsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10300000000000000000001 /* LocalPortsApp.swift */; };
+		B00100000000000000000003 /* StatusBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10400000000000000000001 /* StatusBarController.swift */; };
+		B00100000000000000000004 /* ListeningPort.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10500000000000000000001 /* ListeningPort.swift */; };
+		B00100000000000000000005 /* LsofService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10600000000000000000001 /* LsofService.swift */; };
+		B00100000000000000000006 /* ActionsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10700000000000000000001 /* ActionsService.swift */; };
+		B00100000000000000000007 /* PortsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10800000000000000000001 /* PortsViewModel.swift */; };
+		B00100000000000000000008 /* PortsPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10900000000000000000001 /* PortsPopoverView.swift */; };
+		B00100000000000000000009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F10A00000000000000000001 /* Assets.xcassets */; };
+		B00100000000000000000010 /* ManagedServiceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10C00000000000000000001 /* ManagedServiceController.swift */; };
+		B00100000000000000000011 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = F10D00000000000000000001 /* AppIcon.icns */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		F10100000000000000000001 /* LocalPorts.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LocalPorts.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10200000000000000000001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		F10300000000000000000001 /* LocalPortsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPortsApp.swift; sourceTree = "<group>"; };
+		F10400000000000000000001 /* StatusBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarController.swift; sourceTree = "<group>"; };
+		F10500000000000000000001 /* ListeningPort.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListeningPort.swift; sourceTree = "<group>"; };
+		F10600000000000000000001 /* LsofService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LsofService.swift; sourceTree = "<group>"; };
+		F10700000000000000000001 /* ActionsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionsService.swift; sourceTree = "<group>"; };
+		F10800000000000000000001 /* PortsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortsViewModel.swift; sourceTree = "<group>"; };
+		F10900000000000000000001 /* PortsPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortsPopoverView.swift; sourceTree = "<group>"; };
+		F10A00000000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F10B00000000000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F10C00000000000000000001 /* ManagedServiceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedServiceController.swift; sourceTree = "<group>"; };
+		F10D00000000000000000001 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		P00100000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		G00100000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				G00200000000000000000001 /* LocalPorts */,
+				G00700000000000000000001 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		G00200000000000000000001 /* LocalPorts */ = {
+			isa = PBXGroup;
+			children = (
+				F10300000000000000000001 /* LocalPortsApp.swift */,
+				F10200000000000000000001 /* AppDelegate.swift */,
+				F10400000000000000000001 /* StatusBarController.swift */,
+				G00300000000000000000001 /* Models */,
+				G00400000000000000000001 /* Services */,
+				G00500000000000000000001 /* ViewModels */,
+				G00600000000000000000001 /* Views */,
+				F10A00000000000000000001 /* Assets.xcassets */,
+				F10D00000000000000000001 /* AppIcon.icns */,
+				F10B00000000000000000001 /* Info.plist */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		G00300000000000000000001 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				F10500000000000000000001 /* ListeningPort.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		G00400000000000000000001 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				F10600000000000000000001 /* LsofService.swift */,
+				F10700000000000000000001 /* ActionsService.swift */,
+				F10C00000000000000000001 /* ManagedServiceController.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		G00500000000000000000001 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				F10800000000000000000001 /* PortsViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		G00600000000000000000001 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				F10900000000000000000001 /* PortsPopoverView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		G00700000000000000000001 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F10100000000000000000001 /* LocalPorts.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		T00100000000000000000001 /* LocalPorts */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = L00200000000000000000001 /* Build configuration list for PBXNativeTarget "LocalPorts" */;
+			buildPhases = (
+				P00200000000000000000001 /* Sources */,
+				P00100000000000000000001 /* Frameworks */,
+				P00300000000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = LocalPorts;
+			productName = LocalPorts;
+			productReference = F10100000000000000000001 /* LocalPorts.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		PR0100000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					T00100000000000000000001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = L00100000000000000000001 /* Build configuration list for PBXProject "LocalPorts" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = G00100000000000000000001;
+			productRefGroup = G00700000000000000000001 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				T00100000000000000000001 /* LocalPorts */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		P00300000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00100000000000000000009 /* Assets.xcassets in Resources */,
+				B00100000000000000000011 /* AppIcon.icns in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		P00200000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00100000000000000000002 /* LocalPortsApp.swift in Sources */,
+				B00100000000000000000001 /* AppDelegate.swift in Sources */,
+				B00100000000000000000003 /* StatusBarController.swift in Sources */,
+				B00100000000000000000004 /* ListeningPort.swift in Sources */,
+				B00100000000000000000005 /* LsofService.swift in Sources */,
+				B00100000000000000000006 /* ActionsService.swift in Sources */,
+				B00100000000000000000007 /* PortsViewModel.swift in Sources */,
+				B00100000000000000000008 /* PortsPopoverView.swift in Sources */,
+				B00100000000000000000010 /* ManagedServiceController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		C00100000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C00200000000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		C00300000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.localports.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C00400000000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.localports.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		L00100000000000000000001 /* Build configuration list for PBXProject "LocalPorts" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C00100000000000000000001 /* Debug */,
+				C00200000000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		L00200000000000000000001 /* Build configuration list for PBXNativeTarget "LocalPorts" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C00300000000000000000001 /* Debug */,
+				C00400000000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = PR0100000000000000000001 /* Project object */;
+}

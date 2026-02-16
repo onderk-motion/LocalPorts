@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Xcode build artifacts
+.build/
+build/
+DerivedData/
+
+# Xcode user-specific files
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+
+# Swift Package Manager
+.swiftpm/
+
+# Logs
+*.log
+
+# Local icon backups (not required for app build)
+/localports.icns
