@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-release:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Release App
+        run: |
+          xcodebuild -project LocalPorts.xcodeproj \
+            -scheme LocalPorts \
+            -configuration Release \
+            -derivedDataPath .build \
+            build
+
+      - name: Package App
+        run: |
+          APP_PATH=".build/Build/Products/Release/LocalPorts.app"
+          ZIP_NAME="LocalPorts-${GITHUB_REF_NAME}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_NAME"
+          shasum -a 256 "$ZIP_NAME" > "${ZIP_NAME}.sha256"
+
+      - name: Publish GitHub Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            LocalPorts-*.zip
+            LocalPorts-*.zip.sha256

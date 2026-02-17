@@ -21,6 +21,7 @@ It combines:
 10. Build and Deploy
 11. Troubleshooting
 12. Security and Distribution Notes
+13. Open Source Collaboration
 
 ## 1. Overview
 
@@ -69,6 +70,8 @@ Current app metadata:
 - Add custom service via `+` button.
 - Edit existing service via card menu `Edit`.
 - Folder selection supports Finder picker (`Browse...`).
+- Start command presets are available (`npm run dev`, `pnpm dev`, `yarn dev`, `node server.js`).
+- `Test Command` checks folder/command validity before save.
 - Optional per-service health check URL can be configured.
 
 Validation rules:
@@ -91,6 +94,7 @@ Validation rules:
 ### Configuration Backup
 - Export the full app configuration to a JSON file from Settings.
 - Import configuration JSON from Settings; imported content is sanitized before being saved.
+- Imported start commands are locked by default (`review mode`) until user clicks `Trust Config`.
 - Quick access to the active config file is available via `Show Config File`.
 
 ### Diagnostics for Start Failures
@@ -101,10 +105,10 @@ Log entries include:
 - timestamp
 - service id and name
 - working directory
-- executed shell command
+- executed shell command (sensitive values redacted)
 - exit status
-- stdout
-- stderr
+- stdout (redacted and truncated)
+- stderr (redacted and truncated)
 
 ## 3. Requirements
 
@@ -118,6 +122,18 @@ Optional for managed starts:
 - project folders must exist locally
 
 ## 4. Quick Start
+
+### For Developers
+1. Open `LocalPorts.xcodeproj`.
+2. Build and run (`LocalPorts` scheme).
+3. Add/Edit services and verify start/stop flow.
+
+### For Vibe Coders
+1. Click `+` to add a service card.
+2. Set `Address` (`http://localhost:PORT`).
+3. Choose `Project Folder`.
+4. Pick a command preset or write your command.
+5. Click `Test Command`, then `Add Card`.
 
 ### Xcode
 1. Open `LocalPorts.xcodeproj`.
@@ -145,6 +161,7 @@ open /Applications/LocalPorts.app
 
 ### Start/Stop Flow
 - `Play` button starts service if `Project Folder + Start Command` are configured.
+- If imported config is in review mode, start is blocked until `Trust Config`.
 - `Stop` sends `SIGTERM`.
 - `Force Stop` sends `SIGKILL`.
 - `Restart` performs stop then start.
@@ -247,6 +264,7 @@ If first token in start command is a local file in working directory (for exampl
 ### Auto Refresh and Auto Start
 - periodic refresh timer every 2 seconds
 - one-time launch auto-start attempt for startable services that are not already listening
+- auto-start is paused when imported config requires trust approval
 
 ## 10. Build and Deploy
 
@@ -266,6 +284,13 @@ ditto \
 ### Verify Running Path
 ```bash
 pgrep -fl '/Applications/LocalPorts.app/Contents/MacOS/LocalPorts'
+```
+
+### CI (GitHub Actions)
+- Workflow: `.github/workflows/ci.yml`
+- Local equivalent:
+```bash
+./scripts/ci-smoke.sh
 ```
 
 ## 11. Troubleshooting
@@ -311,7 +336,8 @@ killall iconservicesagent || true
 
 ## 12. Security and Distribution Notes
 
-- This repo is currently prepared for private publishing and local usage.
+- Config imports are sanitized; start commands from imported config require explicit trust.
+- Diagnostics redact common secret/token patterns before writing logs.
 - Local/development signing may still trigger Gatekeeper warnings on other machines.
 - For broad distribution without warning dialogs, use:
   - Developer ID signing
@@ -319,3 +345,16 @@ killall iconservicesagent || true
 
 ---
 
+## 13. Open Source Collaboration
+
+Project governance files:
+- `LICENSE`
+- `CONTRIBUTING.md`
+- `CODE_OF_CONDUCT.md`
+- `SECURITY.md`
+
+GitHub templates and automation:
+- Issue templates: `.github/ISSUE_TEMPLATE/`
+- PR template: `.github/pull_request_template.md`
+- CI workflow: `.github/workflows/ci.yml`
+- Release workflow: `.github/workflows/release.yml`

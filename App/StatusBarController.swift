@@ -112,7 +112,11 @@ final class AppSettingsStore: ObservableObject {
                 defaultBuiltInServices: PortsViewModel.defaultBuiltInServices
             )
             syncFromConfig(imported)
-            configActionMessage = "Configuration imported from \(sourceURL.lastPathComponent)."
+            if imported.appSettings.requiresImportedStartApproval {
+                configActionMessage = "Configuration imported from \(sourceURL.lastPathComponent). Review required: click Trust Config in the services panel before Start."
+            } else {
+                configActionMessage = "Configuration imported from \(sourceURL.lastPathComponent)."
+            }
         } catch {
             logger.error("Failed to import config: \(error.localizedDescription, privacy: .public)")
             configActionMessage = "Could not import configuration: \(error.localizedDescription)"

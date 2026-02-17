@@ -254,17 +254,20 @@ final class ManagedServiceController {
                 .appendingPathComponent("\(configuration.id).log", isDirectory: false)
 
             let timestamp = ISO8601DateFormatter().string(from: Date())
+            let safeCommand = sanitizeDiagnosticsText(command, maxLength: 2_000)
+            let safeStdout = sanitizeDiagnosticsText(stdout, maxLength: 6_000)
+            let safeStderr = sanitizeDiagnosticsText(stderr, maxLength: 6_000)
             let entry = """
 
             [\(timestamp)] phase=\(phase)
             service=\(configuration.name) (\(configuration.id))
             cwd=\(workingDirectory)
-            command=\(command)
+            command=\(safeCommand)
             exit=\(terminationStatus)
             stdout:
-            \(stdout.isEmpty ? "<empty>" : stdout)
+            \(safeStdout.isEmpty ? "<empty>" : safeStdout)
             stderr:
-            \(stderr.isEmpty ? "<empty>" : stderr)
+            \(safeStderr.isEmpty ? "<empty>" : safeStderr)
             ---
             """
 
@@ -284,5 +287,38 @@ final class ManagedServiceController {
             logger.error("Failed to write diagnostics for \(self.configuration.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return nil
         }
+    }
+
+    private func sanitizeDiagnosticsText(_ text: String, maxLength: Int) -> String {
+        var value = text
+        value = redactPattern(
+            in: value,
+            pattern: #"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|authorization)\b\s*[:=]\s*([^\s"']+)"#,
+            template: "$1=<redacted>"
+        )
+        value = redactPattern(
+            in: value,
+            pattern: #"(?i)\b(authorization:\s*bearer)\s+[A-Za-z0-9._-]+"#,
+            template: "$1 <redacted>"
+        )
+        value = redactPattern(
+            in: value,
+            pattern: #"://([^:/\s]+):([^@/\s]+)@"#,
+            template: "://$1:<redacted>@"
+        )
+
+        if value.count > maxLength {
+            let prefix = value.prefix(maxLength)
+            return "\(prefix)\n<truncated>"
+        }
+        return value
+    }
+
+    private func redactPattern(in value: String, pattern: String, template: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return value
+        }
+        let range = NSRange(location: 0, length: value.utf16.count)
+        return regex.stringByReplacingMatches(in: value, options: [], range: range, withTemplate: template)
     }
 }

@@ -46,6 +46,7 @@ final class PortsViewModel: ObservableObject {
     @Published private(set) var activeProfileID: String = ""
     @Published private(set) var activeProfileName: String = "Default"
     @Published private(set) var hasCompletedOnboarding: Bool = false
+    @Published private(set) var requiresImportedStartApproval: Bool = false
     @Published private(set) var healthStates: [String: ServiceHealthState] = [:]
 
     var serviceSnapshots: [ServiceSnapshot] {
@@ -82,10 +83,13 @@ final class PortsViewModel: ObservableObject {
     private var refreshTimer: DispatchSourceTimer?
     private var refreshTask: Task<Void, Never>?
     private var didAttemptLaunchAutoStart = false
+    private var startVerificationTasks: [String: Task<Void, Never>] = [:]
     private var healthCheckTasks: [String: Task<Void, Never>] = [:]
     private var lastHealthCheckAt: [String: Date] = [:]
     private let healthCheckInterval: TimeInterval = 5.0
     private let healthCheckTimeout: TimeInterval = 1.8
+    private let startVerificationTimeout: TimeInterval = 12.0
+    private let startVerificationPollIntervalNanoseconds: UInt64 = 650_000_000
 
     private var serviceConfigurations: [ManagedServiceConfiguration] = []
     private var controllers: [String: ManagedServiceController] = [:]
@@ -101,6 +105,7 @@ final class PortsViewModel: ObservableObject {
         case duplicatePort(Int)
         case startNeedsDirectory
         case directoryNeedsStartCommand
+        case invalidStartCommand
         case profileNameRequired
         case profileDeleteLast
 
@@ -126,6 +131,8 @@ final class PortsViewModel: ObservableObject {
                 return "Project folder is required when start command is provided."
             case .directoryNeedsStartCommand:
                 return "Start command is required when project folder is provided."
+            case .invalidStartCommand:
+                return "Start command format is invalid. Check quotes and escapes."
             case .profileNameRequired:
                 return "Profile name is required."
             case .profileDeleteLast:
@@ -156,6 +163,7 @@ final class PortsViewModel: ObservableObject {
 
     deinit {
         refreshTimer?.cancel()
+        startVerificationTasks.values.forEach { $0.cancel() }
         healthCheckTasks.values.forEach { $0.cancel() }
         if let observer = configChangeObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -270,7 +278,7 @@ final class PortsViewModel: ObservableObject {
             address: config.urlString,
             healthCheckURL: config.healthCheckURLString ?? "",
             workingDirectory: config.workingDirectory ?? "",
-            startCommand: config.startCommand?.joined(separator: " ") ?? ""
+            startCommand: commandLineString(from: config.startCommand)
         )
     }
 
@@ -291,6 +299,10 @@ final class PortsViewModel: ObservableObject {
             statusMessage = "Start is not configured for \(config.name)"
             return
         }
+        if isStartBlockedByImportApproval(id) {
+            showImportApprovalRequiredMessage()
+            return
+        }
 
         if isRunning(id) {
             statusMessage = "\(config.name) is already running"
@@ -303,9 +315,12 @@ final class PortsViewModel: ObservableObject {
         do {
             try controller.start()
             statusMessage = "Starting \(config.name)..."
+            beginStartVerification(for: config)
             refreshSoon(after: 1_000_000_000)
         } catch {
             let message = error.localizedDescription
+            startVerificationTasks[id]?.cancel()
+            startVerificationTasks.removeValue(forKey: id)
             serviceStates[id] = .failed(message: message)
             statusMessage = message
             logger.error("Start failed for \(config.name, privacy: .public): \(message, privacy: .public)")
@@ -314,6 +329,8 @@ final class PortsViewModel: ObservableObject {
 
     func stopService(_ id: String, force: Bool = false) {
         guard let config = serviceConfiguration(for: id) else { return }
+        startVerificationTasks[id]?.cancel()
+        startVerificationTasks.removeValue(forKey: id)
         guard let pid = pid(forServiceID: id) else {
             statusMessage = "\(config.name) is not running"
             serviceStates[id] = .stopped
@@ -344,6 +361,10 @@ final class PortsViewModel: ObservableObject {
         guard let config = serviceConfiguration(for: id) else { return }
         guard controllers[id] != nil else {
             statusMessage = "Restart is not configured for \(config.name)"
+            return
+        }
+        if isStartBlockedByImportApproval(id) {
+            showImportApprovalRequiredMessage()
             return
         }
 
@@ -533,9 +554,10 @@ final class PortsViewModel: ObservableObject {
         if trimmedCommand.isEmpty {
             commandParts = nil
         } else {
-            commandParts = trimmedCommand
-                .split(whereSeparator: \.isWhitespace)
-                .map(String.init)
+            guard let parsed = parseCommandLine(trimmedCommand), !parsed.isEmpty else {
+                throw ServiceValidationError.invalidStartCommand
+            }
+            commandParts = parsed
         }
 
         let updated = ManagedServiceConfiguration(
@@ -602,9 +624,10 @@ final class PortsViewModel: ObservableObject {
         if trimmedCommand.isEmpty {
             commandParts = nil
         } else {
-            commandParts = trimmedCommand
-                .split(whereSeparator: \.isWhitespace)
-                .map(String.init)
+            guard let parsed = parseCommandLine(trimmedCommand), !parsed.isEmpty else {
+                throw ServiceValidationError.invalidStartCommand
+            }
+            commandParts = parsed
         }
 
         let config = ManagedServiceConfiguration(
@@ -632,6 +655,8 @@ final class PortsViewModel: ObservableObject {
         let config = serviceConfigurations[index]
         guard !config.isBuiltIn else { return }
 
+        startVerificationTasks[id]?.cancel()
+        startVerificationTasks.removeValue(forKey: id)
         serviceConfigurations.remove(at: index)
         serviceStates.removeValue(forKey: id)
         customServiceNames.removeValue(forKey: id)
@@ -654,6 +679,102 @@ final class PortsViewModel: ObservableObject {
 
     func hasCustomName(_ serviceID: String) -> Bool {
         customServiceNames[serviceID] != nil
+    }
+
+    func isStartBlockedByImportApproval(_ serviceID: String) -> Bool {
+        guard requiresImportedStartApproval else { return false }
+        return serviceConfiguration(for: serviceID)?.canStart ?? false
+    }
+
+    func showImportApprovalRequiredMessage() {
+        statusMessage = "Imported start commands are locked. Click Trust Config to enable Start."
+    }
+
+    func approveImportedStartCommands() {
+        guard requiresImportedStartApproval else { return }
+
+        do {
+            let updated = try configStore.update { config in
+                config.appSettings.requiresImportedStartApproval = false
+            }
+            requiresImportedStartApproval = updated.appSettings.requiresImportedStartApproval
+            didAttemptLaunchAutoStart = false
+            statusMessage = "Trusted imported config. Start actions are enabled."
+            refreshNow()
+        } catch {
+            logger.error("Failed to trust imported start commands: \(error.localizedDescription, privacy: .public)")
+            statusMessage = "Failed to update trust setting"
+        }
+    }
+
+    func validateStartConfiguration(workingDirectory: String, startCommand: String) throws -> String {
+        let trimmedDirectory = workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCommand = startCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !trimmedCommand.isEmpty && trimmedDirectory.isEmpty {
+            throw ServiceValidationError.startNeedsDirectory
+        }
+        if !trimmedDirectory.isEmpty && trimmedCommand.isEmpty {
+            throw ServiceValidationError.directoryNeedsStartCommand
+        }
+        guard !trimmedDirectory.isEmpty, !trimmedCommand.isEmpty else {
+            throw ServiceValidationError.directoryNeedsStartCommand
+        }
+        guard FileManager.default.fileExists(atPath: trimmedDirectory) else {
+            throw NSError(
+                domain: "PortsViewModel",
+                code: 404,
+                userInfo: [NSLocalizedDescriptionKey: "Project folder does not exist: \(trimmedDirectory)"]
+            )
+        }
+        guard let commandParts = parseCommandLine(trimmedCommand), !commandParts.isEmpty else {
+            throw ServiceValidationError.invalidStartCommand
+        }
+
+        let executable = commandParts[0]
+        if executable.contains("/") {
+            let resolvedPath = executable.hasPrefix("/")
+                ? executable
+                : URL(fileURLWithPath: trimmedDirectory).appendingPathComponent(executable).path
+            guard FileManager.default.fileExists(atPath: resolvedPath) else {
+                throw NSError(
+                    domain: "PortsViewModel",
+                    code: 404,
+                    userInfo: [NSLocalizedDescriptionKey: "Command not found: \(resolvedPath)"]
+                )
+            }
+        } else {
+            let localPath = URL(fileURLWithPath: trimmedDirectory).appendingPathComponent(executable).path
+            let localExists = FileManager.default.fileExists(atPath: localPath)
+            if !localExists {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+                process.arguments = [executable]
+                process.standardOutput = Pipe()
+                process.standardError = Pipe()
+
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                } catch {
+                    throw NSError(
+                        domain: "PortsViewModel",
+                        code: 500,
+                        userInfo: [NSLocalizedDescriptionKey: "Could not validate command \(executable)"]
+                    )
+                }
+
+                if process.terminationStatus != 0 {
+                    throw NSError(
+                        domain: "PortsViewModel",
+                        code: 404,
+                        userInfo: [NSLocalizedDescriptionKey: "Command not found in PATH: \(executable)"]
+                    )
+                }
+            }
+        }
+
+        return "Command looks valid for \(trimmedDirectory)"
     }
 
     func renameService(_ id: String, to newValue: String) {
@@ -774,6 +895,7 @@ final class PortsViewModel: ObservableObject {
         activeProfileID = profile?.id ?? "default"
         activeProfileName = profile?.name ?? "Default"
         hasCompletedOnboarding = config.hasCompletedOnboarding
+        requiresImportedStartApproval = config.appSettings.requiresImportedStartApproval
 
         let services = profile?.serviceConfigurations ?? Self.defaultBuiltInServices
         serviceConfigurations = normalizeServices(services)
@@ -829,6 +951,75 @@ final class PortsViewModel: ObservableObject {
             logger.error("Failed to persist profile \(self.activeProfileID, privacy: .public): \(error.localizedDescription, privacy: .public)")
             statusMessage = "Failed to save profile changes"
         }
+    }
+
+    private func commandLineString(from parts: [String]?) -> String {
+        guard let parts, !parts.isEmpty else { return "" }
+        return parts.map(shellEscapeForDisplay).joined(separator: " ")
+    }
+
+    private func shellEscapeForDisplay(_ value: String) -> String {
+        guard !value.isEmpty else { return "''" }
+        if value.range(of: #"^[A-Za-z0-9_./:-]+$"#, options: .regularExpression) != nil {
+            return value
+        }
+        return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private func parseCommandLine(_ input: String) -> [String]? {
+        var tokens: [String] = []
+        var current = ""
+        var activeQuote: Character?
+        var isEscaping = false
+
+        for char in input {
+            if isEscaping {
+                current.append(char)
+                isEscaping = false
+                continue
+            }
+
+            if let quote = activeQuote {
+                if char == quote {
+                    activeQuote = nil
+                } else if char == "\\" && quote == "\"" {
+                    isEscaping = true
+                } else {
+                    current.append(char)
+                }
+                continue
+            }
+
+            if char == "\\" {
+                isEscaping = true
+                continue
+            }
+
+            if char == "\"" || char == "'" {
+                activeQuote = char
+                continue
+            }
+
+            if char.isWhitespace {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current = ""
+                }
+                continue
+            }
+
+            current.append(char)
+        }
+
+        if isEscaping || activeQuote != nil {
+            return nil
+        }
+
+        if !current.isEmpty {
+            tokens.append(current)
+        }
+
+        return tokens
     }
 
     private func normalizeURLString(from input: String) -> String? {
@@ -967,15 +1158,62 @@ final class PortsViewModel: ObservableObject {
         }
     }
 
+    private func beginStartVerification(for config: ManagedServiceConfiguration) {
+        let serviceID = config.id
+        let serviceName = config.name
+        let servicePort = config.port
+        let deadline = Date().addingTimeInterval(startVerificationTimeout)
+
+        startVerificationTasks[serviceID]?.cancel()
+        startVerificationTasks[serviceID] = Task { [weak self] in
+            guard let self else { return }
+
+            while Date() < deadline {
+                if Task.isCancelled {
+                    break
+                }
+
+                self.refreshNow()
+
+                if let pid = self.ports.first(where: { $0.port == servicePort })?.pid {
+                    self.serviceStates[serviceID] = .running(pid: pid)
+                    self.statusMessage = "Started \(serviceName)"
+                    self.startVerificationTasks[serviceID] = nil
+                    return
+                }
+
+                if case .failed = self.serviceStates[serviceID] {
+                    self.startVerificationTasks[serviceID] = nil
+                    return
+                }
+
+                try? await Task.sleep(nanoseconds: self.startVerificationPollIntervalNanoseconds)
+            }
+
+            if self.isRunning(serviceID) {
+                self.startVerificationTasks[serviceID] = nil
+                return
+            }
+
+            self.serviceStates[serviceID] = .failed(message: "Port \(servicePort) did not open in time")
+            self.statusMessage = "Start timed out for \(serviceName). Check the start command and diagnostics logs."
+            self.startVerificationTasks[serviceID] = nil
+        }
+    }
+
     private func updateServiceStates(with ports: [ListeningPort]) {
         for config in serviceConfigurations {
             if let pid = ports.first(where: { $0.port == config.port })?.pid {
                 serviceStates[config.id] = .running(pid: pid)
+                startVerificationTasks[config.id]?.cancel()
+                startVerificationTasks.removeValue(forKey: config.id)
                 continue
             }
 
             switch serviceStates[config.id] {
             case .failed:
+                break
+            case .starting where startVerificationTasks[config.id] != nil:
                 break
             default:
                 serviceStates[config.id] = .stopped
@@ -1016,6 +1254,10 @@ final class PortsViewModel: ObservableObject {
 
     private func tryLaunchAutoStartIfNeeded() {
         guard !didAttemptLaunchAutoStart else { return }
+        guard !requiresImportedStartApproval else {
+            logger.info("Launch auto-start paused: imported config requires trust approval")
+            return
+        }
         didAttemptLaunchAutoStart = true
 
         let serviceIDsToStart = serviceConfigurations.compactMap { config -> String? in
@@ -1045,7 +1287,7 @@ final class PortsViewModel: ObservableObject {
     }
 }
 
-struct AppConfig: Codable {
+struct AppConfig: Codable, Equatable {
     var schemaVersion: Int
     var selectedProfileID: String
     var profiles: [AppProfile]
@@ -1090,6 +1332,12 @@ struct AppConfig: Codable {
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
     }
 
+    static let legacyBuiltInIDAliases: [String: String] = [
+        "watchlist-web": "local-frontend-5173",
+        "watchlist-api": "local-api-5175",
+        "dailingo": "local-service-5120"
+    ]
+
     static func makeDefault(defaultBuiltInServices: [ManagedServiceConfiguration]) -> AppConfig {
         let now = ISO8601DateFormatter().string(from: Date())
         let profile = AppProfile(
@@ -1128,6 +1376,8 @@ struct AppConfig: Codable {
 
         var seenProfileIDs: Set<String> = []
         var rebuiltProfiles: [AppProfile] = []
+        let builtInsByID = Dictionary(uniqueKeysWithValues: defaultBuiltInServices.map { ($0.id, $0) })
+        let builtInsByPort = Dictionary(uniqueKeysWithValues: defaultBuiltInServices.map { ($0.port, $0) })
 
         for profile in sanitized.profiles {
             var profileID = profile.id.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1136,11 +1386,46 @@ struct AppConfig: Codable {
             }
             seenProfileIDs.insert(profileID)
 
+            var builtInOverrides: [String: ManagedServiceConfiguration] = [:]
+            var customCandidates: [ManagedServiceConfiguration] = []
+
+            for rawService in profile.serviceConfigurations {
+                let normalized = normalizedService(rawService)
+                if let resolvedBuiltInID = resolvedBuiltInID(
+                    rawID: normalized.id,
+                    port: normalized.port,
+                    builtInsByID: builtInsByID,
+                    builtInsByPort: builtInsByPort
+                ), let base = builtInsByID[resolvedBuiltInID] {
+                    let candidate = mergedBuiltIn(base: base, overrideValue: normalized)
+                    if let existing = builtInOverrides[resolvedBuiltInID] {
+                        builtInOverrides[resolvedBuiltInID] = preferredBuiltInOverride(existing: existing, candidate: candidate)
+                    } else {
+                        builtInOverrides[resolvedBuiltInID] = candidate
+                    }
+                    continue
+                }
+
+                customCandidates.append(
+                    ManagedServiceConfiguration(
+                        id: normalized.id,
+                        name: normalized.name,
+                        workingDirectory: normalized.workingDirectory,
+                        port: normalized.port,
+                        urlString: normalized.urlString,
+                        healthCheckURLString: normalized.healthCheckURLString,
+                        startCommand: normalized.startCommand,
+                        isBuiltIn: false
+                    )
+                )
+            }
+
             var seenServiceIDs: Set<String> = []
             var seenPorts: Set<Int> = []
             var services: [ManagedServiceConfiguration] = []
 
-            for service in profile.serviceConfigurations {
+            for builtIn in defaultBuiltInServices {
+                let service = builtInOverrides[builtIn.id] ?? builtIn
                 guard !seenServiceIDs.contains(service.id), !seenPorts.contains(service.port) else {
                     continue
                 }
@@ -1149,16 +1434,46 @@ struct AppConfig: Codable {
                 services.append(service)
             }
 
-            for builtIn in defaultBuiltInServices where !seenServiceIDs.contains(builtIn.id) && !seenPorts.contains(builtIn.port) {
-                seenServiceIDs.insert(builtIn.id)
-                seenPorts.insert(builtIn.port)
-                services.append(builtIn)
+            for rawCustom in customCandidates {
+                var customID = rawCustom.id.trimmingCharacters(in: .whitespacesAndNewlines)
+                if customID.isEmpty || seenServiceIDs.contains(customID) || builtInsByID[customID] != nil || legacyBuiltInIDAliases[customID] != nil {
+                    customID = "custom-\(UUID().uuidString.lowercased())"
+                }
+                guard !seenServiceIDs.contains(customID), !seenPorts.contains(rawCustom.port) else {
+                    continue
+                }
+
+                let custom = ManagedServiceConfiguration(
+                    id: customID,
+                    name: rawCustom.name,
+                    workingDirectory: trimToNil(rawCustom.workingDirectory),
+                    port: rawCustom.port,
+                    urlString: rawCustom.urlString,
+                    healthCheckURLString: trimToNil(rawCustom.healthCheckURLString),
+                    startCommand: normalizeCommand(rawCustom.startCommand),
+                    isBuiltIn: false
+                )
+
+                seenServiceIDs.insert(custom.id)
+                seenPorts.insert(custom.port)
+                services.append(custom)
             }
 
             let validIDs = Set(services.map(\.id))
             let customNames = profile.customServiceNames.reduce(into: [String: String]()) { result, item in
-                guard validIDs.contains(item.key) else { return }
-                result[item.key] = item.value
+                let trimmedName = item.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmedName.isEmpty else { return }
+
+                let rawKey = item.key.trimmingCharacters(in: .whitespacesAndNewlines)
+                let resolvedKey = legacyBuiltInIDAliases[rawKey] ?? rawKey
+                if validIDs.contains(resolvedKey) {
+                    result[resolvedKey] = trimmedName
+                    return
+                }
+
+                if let port = Int(rawKey), let serviceID = services.first(where: { $0.port == port })?.id {
+                    result[serviceID] = trimmedName
+                }
             }
 
             rebuiltProfiles.append(
@@ -1182,9 +1497,100 @@ struct AppConfig: Codable {
 
         return sanitized
     }
+
+    private static func resolvedBuiltInID(
+        rawID: String,
+        port: Int,
+        builtInsByID: [String: ManagedServiceConfiguration],
+        builtInsByPort: [Int: ManagedServiceConfiguration]
+    ) -> String? {
+        if let mapped = legacyBuiltInIDAliases[rawID], builtInsByID[mapped] != nil {
+            return mapped
+        }
+        if builtInsByID[rawID] != nil {
+            return rawID
+        }
+        if let byPort = builtInsByPort[port] {
+            return byPort.id
+        }
+        return nil
+    }
+
+    private static func mergedBuiltIn(
+        base: ManagedServiceConfiguration,
+        overrideValue: ManagedServiceConfiguration
+    ) -> ManagedServiceConfiguration {
+        ManagedServiceConfiguration(
+            id: base.id,
+            name: overrideValue.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? base.name : overrideValue.name,
+            workingDirectory: trimToNil(overrideValue.workingDirectory),
+            port: base.port,
+            urlString: overrideValue.urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? base.urlString : overrideValue.urlString,
+            healthCheckURLString: trimToNil(overrideValue.healthCheckURLString),
+            startCommand: normalizeCommand(overrideValue.startCommand),
+            isBuiltIn: true
+        )
+    }
+
+    private static func preferredBuiltInOverride(
+        existing: ManagedServiceConfiguration,
+        candidate: ManagedServiceConfiguration
+    ) -> ManagedServiceConfiguration {
+        if builtInOverrideScore(candidate) > builtInOverrideScore(existing) {
+            return candidate
+        }
+        return existing
+    }
+
+    private static func builtInOverrideScore(_ service: ManagedServiceConfiguration) -> Int {
+        var score = 0
+        if trimToNil(service.workingDirectory) != nil {
+            score += 2
+        }
+        if !(normalizeCommand(service.startCommand)?.isEmpty ?? true) {
+            score += 2
+        }
+        if trimToNil(service.healthCheckURLString) != nil {
+            score += 1
+        }
+        if !service.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            score += 1
+        }
+        return score
+    }
+
+    private static func normalizedService(_ service: ManagedServiceConfiguration) -> ManagedServiceConfiguration {
+        let normalizedID = service.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ManagedServiceConfiguration(
+            id: normalizedID,
+            name: service.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Service \(service.port)"
+                : service.name,
+            workingDirectory: trimToNil(service.workingDirectory),
+            port: service.port,
+            urlString: service.urlString.trimmingCharacters(in: .whitespacesAndNewlines),
+            healthCheckURLString: trimToNil(service.healthCheckURLString),
+            startCommand: normalizeCommand(service.startCommand),
+            isBuiltIn: service.isBuiltIn
+        )
+    }
+
+    private static func trimToNil(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func normalizeCommand(_ value: [String]?) -> [String]? {
+        guard let value else { return nil }
+        let normalized = value
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return normalized.isEmpty ? nil : normalized
+    }
 }
 
-struct AppProfile: Codable, Identifiable {
+struct AppProfile: Codable, Equatable, Identifiable {
     let id: String
     var name: String
     var serviceConfigurations: [ManagedServiceConfiguration]
@@ -1193,11 +1599,28 @@ struct AppProfile: Codable, Identifiable {
     var updatedAt: String
 }
 
-struct PersistedAppSettings: Codable {
+struct PersistedAppSettings: Codable, Equatable {
     var launchInBackground: Bool
+    var requiresImportedStartApproval: Bool
+
+    init(launchInBackground: Bool, requiresImportedStartApproval: Bool = false) {
+        self.launchInBackground = launchInBackground
+        self.requiresImportedStartApproval = requiresImportedStartApproval
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case launchInBackground
+        case requiresImportedStartApproval
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        launchInBackground = try container.decodeIfPresent(Bool.self, forKey: .launchInBackground) ?? true
+        requiresImportedStartApproval = try container.decodeIfPresent(Bool.self, forKey: .requiresImportedStartApproval) ?? false
+    }
 }
 
-struct AppMigrationMetadata: Codable {
+struct AppMigrationMetadata: Codable, Equatable {
     var migratedFromLegacyUserDefaultsAt: String
     var legacyCompatibilityUntilVersion: String
 }
@@ -1223,8 +1646,16 @@ final class AppConfigStore {
         }
 
         if let loaded = loadFromDisk() {
-            cachedConfig = loaded
-            return loaded
+            let sanitized = AppConfig.sanitizeImported(loaded, defaultBuiltInServices: defaultBuiltInServices)
+            if sanitized != loaded {
+                do {
+                    try saveToDisk(sanitized)
+                } catch {
+                    logger.error("Failed to persist sanitized config: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            cachedConfig = sanitized
+            return sanitized
         }
 
         let migration = LegacyMigrationService(fileManager: fileManager)
@@ -1309,7 +1740,9 @@ final class AppConfigStore {
     ) throws -> AppConfig {
         let data = try Data(contentsOf: sourceURL)
         let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
-        let sanitized = AppConfig.sanitizeImported(decoded, defaultBuiltInServices: defaultBuiltInServices)
+        var sanitized = AppConfig.sanitizeImported(decoded, defaultBuiltInServices: defaultBuiltInServices)
+        sanitized.appSettings.requiresImportedStartApproval = sanitized.profiles
+            .contains(where: { profile in profile.serviceConfigurations.contains(where: \.canStart) })
 
         try saveToDisk(sanitized)
         cachedConfig = sanitized
@@ -1385,12 +1818,6 @@ struct LegacyMigrationService {
     private let builtInOverridesStorageKey = "BuiltInServiceOverrides.v1"
     private let launchInBackgroundKey = "LaunchInBackground.v1"
 
-    private let oldToNewBuiltInID: [String: String] = [
-        "watchlist-web": "local-frontend-5173",
-        "watchlist-api": "local-api-5175",
-        "dailingo": "local-service-5120"
-    ]
-
     init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
     }
@@ -1410,16 +1837,17 @@ struct LegacyMigrationService {
             return nil
         }
 
-        var builtInServices = defaultBuiltInServices
+        var builtInServicesByID = Dictionary(uniqueKeysWithValues: defaultBuiltInServices.map { ($0.id, $0) })
 
         if let raw = defaults.data(forKey: builtInOverridesStorageKey),
-           let decoded = try? JSONDecoder().decode([ManagedServiceConfiguration].self, from: raw) {
-            let overridesByPort = Dictionary(uniqueKeysWithValues: decoded.map { ($0.port, $0) })
-            builtInServices = defaultBuiltInServices.map { base in
-                guard let override = overridesByPort[base.port] else {
-                    return base
+           let decodedOverrides = Self.decodeLegacyServiceList(from: raw) {
+            for override in decodedOverrides {
+                guard let targetID = resolveBuiltInID(from: override, builtInServicesByID: builtInServicesByID),
+                      let base = builtInServicesByID[targetID] else {
+                    continue
                 }
-                return ManagedServiceConfiguration(
+
+                builtInServicesByID[targetID] = ManagedServiceConfiguration(
                     id: base.id,
                     name: override.name,
                     workingDirectory: override.workingDirectory,
@@ -1432,33 +1860,78 @@ struct LegacyMigrationService {
             }
         }
 
-        let builtInIDs = Set(builtInServices.map(\.id))
-        let builtInPorts = Set(builtInServices.map(\.port))
-
         var customServices: [ManagedServiceConfiguration] = []
         if let raw = defaults.data(forKey: customServicesStorageKey),
-           let decoded = try? JSONDecoder().decode([ManagedServiceConfiguration].self, from: raw) {
-            customServices = decoded.compactMap { item in
-                guard !builtInIDs.contains(item.id), !builtInPorts.contains(item.port) else {
-                    return nil
+           let decoded = Self.decodeLegacyServiceList(from: raw) {
+            for item in decoded {
+                if let targetID = resolveBuiltInID(from: item, builtInServicesByID: builtInServicesByID),
+                   let base = builtInServicesByID[targetID] {
+                    builtInServicesByID[targetID] = ManagedServiceConfiguration(
+                        id: base.id,
+                        name: item.name,
+                        workingDirectory: item.workingDirectory,
+                        port: base.port,
+                        urlString: item.urlString,
+                        healthCheckURLString: item.healthCheckURLString,
+                        startCommand: item.startCommand,
+                        isBuiltIn: true
+                    )
+                    continue
                 }
-                return ManagedServiceConfiguration(
-                    id: item.id,
-                    name: item.name,
-                    workingDirectory: item.workingDirectory,
-                    port: item.port,
-                    urlString: item.urlString,
-                    healthCheckURLString: item.healthCheckURLString,
-                    startCommand: item.startCommand,
-                    isBuiltIn: false
+
+                customServices.append(
+                    ManagedServiceConfiguration(
+                        id: item.id,
+                        name: item.name,
+                        workingDirectory: item.workingDirectory,
+                        port: item.port,
+                        urlString: item.urlString,
+                        healthCheckURLString: item.healthCheckURLString,
+                        startCommand: item.startCommand,
+                        isBuiltIn: false
+                    )
                 )
             }
         }
 
+        let builtInServices = defaultBuiltInServices.map { builtIn in
+            builtInServicesByID[builtIn.id] ?? builtIn
+        }
+        let builtInIDs = Set(builtInServices.map(\.id))
+        let builtInPorts = Set(builtInServices.map(\.port))
+        customServices = customServices.compactMap { item in
+            guard !builtInIDs.contains(item.id), !builtInPorts.contains(item.port) else {
+                return nil
+            }
+            return ManagedServiceConfiguration(
+                id: item.id,
+                name: item.name,
+                workingDirectory: item.workingDirectory,
+                port: item.port,
+                urlString: item.urlString,
+                healthCheckURLString: item.healthCheckURLString,
+                startCommand: item.startCommand,
+                isBuiltIn: false
+            )
+        }
+
+        var dedupedCustomServices: [ManagedServiceConfiguration] = []
+        var seenCustomIDs: Set<String> = []
+        var seenCustomPorts = builtInPorts
+        for service in customServices {
+            guard !seenCustomIDs.contains(service.id), !seenCustomPorts.contains(service.port) else {
+                continue
+            }
+            seenCustomIDs.insert(service.id)
+            seenCustomPorts.insert(service.port)
+            dedupedCustomServices.append(service)
+        }
+        customServices = dedupedCustomServices
+
         var customNames: [String: String] = [:]
         if let raw = defaults.dictionary(forKey: namesStorageKey) as? [String: String] {
             for (id, name) in raw {
-                let resolvedID = oldToNewBuiltInID[id] ?? id
+                let resolvedID = AppConfig.legacyBuiltInIDAliases[id] ?? id
                 customNames[resolvedID] = name
             }
         }
@@ -1491,5 +1964,29 @@ struct LegacyMigrationService {
             ),
             hasCompletedOnboarding: true
         )
+    }
+
+    private func resolveBuiltInID(
+        from service: ManagedServiceConfiguration,
+        builtInServicesByID: [String: ManagedServiceConfiguration]
+    ) -> String? {
+        let mappedID = AppConfig.legacyBuiltInIDAliases[service.id] ?? service.id
+        if builtInServicesByID[mappedID] != nil {
+            return mappedID
+        }
+        if let matchByPort = builtInServicesByID.values.first(where: { $0.port == service.port }) {
+            return matchByPort.id
+        }
+        return nil
+    }
+
+    private static func decodeLegacyServiceList(from raw: Data) -> [ManagedServiceConfiguration]? {
+        if let list = try? JSONDecoder().decode([ManagedServiceConfiguration].self, from: raw) {
+            return list
+        }
+        if let dictionary = try? JSONDecoder().decode([String: ManagedServiceConfiguration].self, from: raw) {
+            return Array(dictionary.values)
+        }
+        return nil
     }
 }

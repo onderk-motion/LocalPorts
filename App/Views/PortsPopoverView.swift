@@ -31,6 +31,10 @@ struct PortsPopoverView: View {
                     statusBanner(message)
                 }
 
+                if viewModel.requiresImportedStartApproval {
+                    importTrustBanner
+                }
+
                 if !viewModel.hasCompletedOnboarding {
                     onboardingCard
                 }
@@ -252,7 +256,8 @@ struct PortsPopoverView: View {
 
     private func serviceCard(_ service: PortsViewModel.ServiceSnapshot) -> some View {
         let isRunning = viewModel.isRunning(service.id)
-        let canStartOrStop = isRunning || service.canStart
+        let isStartLockedByImport = viewModel.isStartBlockedByImportApproval(service.id)
+        let canDirectStartOrStop = isRunning || service.canStart
 
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 8) {
@@ -290,17 +295,23 @@ struct PortsPopoverView: View {
                         systemName: isRunning ? "stop.fill" : "play.fill",
                         tint: isRunning
                             ? .green.opacity(0.90)
-                            : (canStartOrStop ? .blue.opacity(0.90) : .white.opacity(0.40))
+                            : (isStartLockedByImport
+                                ? .yellow.opacity(0.90)
+                                : (canDirectStartOrStop ? .blue.opacity(0.90) : .orange.opacity(0.78)))
                     ) {
                         if isRunning {
                             viewModel.stopService(service.id, force: false)
-                        } else {
+                        } else if isStartLockedByImport {
+                            viewModel.showImportApprovalRequiredMessage()
+                        } else if service.canStart {
                             viewModel.startService(service.id)
+                        } else {
+                            beginEdit(service.id)
                         }
                     }
-                    .disabled(!canStartOrStop)
-                    .opacity(canStartOrStop ? 1 : 0.7)
-                    .help(isRunning ? "Stop" : (service.canStart ? "Start" : "Start not configured"))
+                    .help(isRunning
+                        ? "Stop"
+                        : (isStartLockedByImport ? "Trust imported config first" : (service.canStart ? "Start" : "Configure start")))
 
                     Menu {
                         Button("Rename") {
@@ -317,6 +328,7 @@ struct PortsPopoverView: View {
                             Button("Restart") {
                                 viewModel.restartService(service.id)
                             }
+                            .disabled(isStartLockedByImport)
                         }
 
                         if service.workingDirectory != nil {
@@ -436,6 +448,38 @@ struct PortsPopoverView: View {
         )
     }
 
+    private var importTrustBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "shield.lefthalf.filled")
+                .font(.caption)
+                .foregroundStyle(.yellow.opacity(0.92))
+
+            Text("Imported config is in review mode. Start actions are locked until you trust it.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.88))
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 8)
+
+            Button("Trust Config") {
+                viewModel.approveImportedStartCommands()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.yellow.opacity(0.25))
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.yellow.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.yellow.opacity(0.22), lineWidth: 1)
+        )
+    }
+
     private func healthIndicatorColor(for health: PortsViewModel.ServiceHealthState, isRunning: Bool) -> Color {
         guard isRunning else {
             return .white.opacity(0.22)
@@ -499,6 +543,12 @@ struct PortsPopoverView: View {
 }
 
 private struct AddServiceSheet: View {
+    private struct CommandPreset: Identifiable {
+        let id: String
+        let title: String
+        let command: String
+    }
+
     @ObservedObject var viewModel: PortsViewModel
     @Binding var isPresented: Bool
 
@@ -508,6 +558,15 @@ private struct AddServiceSheet: View {
     @State private var workingDirectory: String = ""
     @State private var startCommand: String = ""
     @State private var errorMessage: String?
+    @State private var validationMessage: String?
+    @State private var validationIsError = false
+
+    private let presets: [CommandPreset] = [
+        CommandPreset(id: "npm-dev", title: "npm dev", command: "npm run dev"),
+        CommandPreset(id: "pnpm-dev", title: "pnpm dev", command: "pnpm dev"),
+        CommandPreset(id: "yarn-dev", title: "yarn dev", command: "yarn dev"),
+        CommandPreset(id: "node-server", title: "node server", command: "node server.js")
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -519,6 +578,8 @@ private struct AddServiceSheet: View {
             field("Health Check URL (Optional)", text: $healthCheckURL, placeholder: "http://localhost:3000/health")
             projectFolderField
             field("Start Command (Optional)", text: $startCommand, placeholder: "npm run dev")
+            commandPresetBar
+            commandValidationRow
 
             Text("Start requires both Project Folder and Start Command.")
                 .font(.caption)
@@ -546,6 +607,43 @@ private struct AddServiceSheet: View {
         }
         .padding(18)
         .frame(width: 460)
+    }
+
+    private var commandPresetBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(presets) { preset in
+                    Button(preset.title) {
+                        startCommand = preset.command
+                        errorMessage = nil
+                        validationMessage = nil
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private var commandValidationRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Button("Test Command") {
+                    validateStartSetup()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Spacer()
+            }
+
+            if let validationMessage {
+                Text(validationMessage)
+                    .font(.caption)
+                    .foregroundStyle(validationIsError ? .red : .green)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private func field(_ title: String, text: Binding<String>, placeholder: String) -> some View {
@@ -606,9 +704,30 @@ private struct AddServiceSheet: View {
             errorMessage = error.localizedDescription
         }
     }
+
+    private func validateStartSetup() {
+        do {
+            let message = try viewModel.validateStartConfiguration(
+                workingDirectory: workingDirectory,
+                startCommand: startCommand
+            )
+            validationMessage = message
+            validationIsError = false
+            errorMessage = nil
+        } catch {
+            validationMessage = error.localizedDescription
+            validationIsError = true
+        }
+    }
 }
 
 private struct EditServiceSheet: View {
+    private struct CommandPreset: Identifiable {
+        let id: String
+        let title: String
+        let command: String
+    }
+
     @ObservedObject var viewModel: PortsViewModel
     let serviceData: PortsViewModel.ServiceEditorData
     @Environment(\.dismiss) private var dismiss
@@ -618,6 +737,15 @@ private struct EditServiceSheet: View {
     @State private var workingDirectory: String
     @State private var startCommand: String
     @State private var errorMessage: String?
+    @State private var validationMessage: String?
+    @State private var validationIsError = false
+
+    private let presets: [CommandPreset] = [
+        CommandPreset(id: "npm-dev", title: "npm dev", command: "npm run dev"),
+        CommandPreset(id: "pnpm-dev", title: "pnpm dev", command: "pnpm dev"),
+        CommandPreset(id: "yarn-dev", title: "yarn dev", command: "yarn dev"),
+        CommandPreset(id: "node-server", title: "node server", command: "node server.js")
+    ]
 
     init(viewModel: PortsViewModel, serviceData: PortsViewModel.ServiceEditorData) {
         self.viewModel = viewModel
@@ -641,6 +769,8 @@ private struct EditServiceSheet: View {
             field("Health Check URL (Optional)", text: $healthCheckURL, placeholder: "http://localhost:3000/health")
             projectFolderField
             field("Start Command (Optional)", text: $startCommand, placeholder: "npm run dev")
+            commandPresetBar
+            commandValidationRow
 
             Text("Start requires both Project Folder and Start Command.")
                 .font(.caption)
@@ -668,6 +798,43 @@ private struct EditServiceSheet: View {
         }
         .padding(18)
         .frame(width: 460)
+    }
+
+    private var commandPresetBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(presets) { preset in
+                    Button(preset.title) {
+                        startCommand = preset.command
+                        errorMessage = nil
+                        validationMessage = nil
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private var commandValidationRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Button("Test Command") {
+                    validateStartSetup()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Spacer()
+            }
+
+            if let validationMessage {
+                Text(validationMessage)
+                    .font(.caption)
+                    .foregroundStyle(validationIsError ? .red : .green)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private func field(_ title: String, text: Binding<String>, placeholder: String) -> some View {
@@ -726,6 +893,21 @@ private struct EditServiceSheet: View {
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func validateStartSetup() {
+        do {
+            let message = try viewModel.validateStartConfiguration(
+                workingDirectory: workingDirectory,
+                startCommand: startCommand
+            )
+            validationMessage = message
+            validationIsError = false
+            errorMessage = nil
+        } catch {
+            validationMessage = error.localizedDescription
+            validationIsError = true
         }
     }
 }
