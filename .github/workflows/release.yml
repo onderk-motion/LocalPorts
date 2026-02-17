@@ -23,6 +23,7 @@ jobs:
             -scheme LocalPorts \
             -configuration Release \
             -derivedDataPath .build \
+            -destination "generic/platform=macOS" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             build
