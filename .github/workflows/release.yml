@@ -20,6 +20,8 @@ jobs:
             -scheme LocalPorts \
             -configuration Release \
             -derivedDataPath .build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
             build
 
       - name: Package App
