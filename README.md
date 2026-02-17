@@ -305,7 +305,13 @@ If first token in start command is a local file in working directory (for exampl
 ### Release Build
 ```bash
 cd "<repo-root>"
-xcodebuild -project LocalPorts.xcodeproj -scheme LocalPorts -configuration Release build
+xcodebuild -project LocalPorts.xcodeproj \
+  -scheme LocalPorts \
+  -configuration Release \
+  -destination "generic/platform=macOS" \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO \
+  build
 ```
 
 ### Install to /Applications
