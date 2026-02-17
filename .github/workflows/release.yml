@@ -28,6 +28,14 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
+      - name: Verify Universal Binary
+        run: |
+          APP_BIN=".build/Build/Products/Release/LocalPorts.app/Contents/MacOS/LocalPorts"
+          INFO="$(lipo -info "$APP_BIN")"
+          echo "$INFO"
+          echo "$INFO" | grep -q "arm64" || (echo "Missing arm64 slice" && exit 1)
+          echo "$INFO" | grep -q "x86_64" || (echo "Missing x86_64 slice" && exit 1)
+
       - name: Package App
         run: |
           APP_PATH=".build/Build/Products/Release/LocalPorts.app"
