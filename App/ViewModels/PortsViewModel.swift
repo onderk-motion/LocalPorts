@@ -175,8 +175,8 @@ final class PortsViewModel: ObservableObject {
             forName: .localPortsConfigDidChange,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
+        ) { _ in
+            Task { @MainActor [weak self] in
                 self?.handleExternalConfigUpdate()
             }
         }
@@ -1243,8 +1243,8 @@ final class PortsViewModel: ObservableObject {
     private func startAutoRefresh() {
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
         timer.schedule(deadline: .now() + 2.0, repeating: 2.0)
-        timer.setEventHandler { [weak self] in
-            Task { @MainActor in
+        timer.setEventHandler {
+            Task { @MainActor [weak self] in
                 self?.refreshNow()
             }
         }
