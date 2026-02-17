@@ -1,308 +1,114 @@
 # LocalPorts
 
-LocalPorts is a macOS menu bar app that helps you manage your local projects from one place.
+LocalPorts is a macOS menu bar app that helps you manage local services from one place.
 
-Instead of juggling multiple terminal tabs, you can see which local apps are running and control them from the menu bar:
-- see service status (`Running` / `Stopped`)
-- open local URL in browser
-- start, stop, restart, or force-stop services
-- save project folder + command once, then launch with one click
+![LocalPorts interface](docs/images/localports-ui.png)
 
-Who this is for:
-- developers running multiple local frontend/backend services
-- users who want a simple "open app and click start" workflow
+Most people should install LocalPorts from GitHub Releases. Developer build details are kept at the end of this README.
 
-No Xcode is required to use the app from Releases.
+## End User Guide (Releases)
 
-## Table of Contents
-1. Overview
-2. Core Features
-3. Requirements
-4. Quick Start
-5. How to Use
-6. Settings
-7. Data Persistence
-8. Project Structure
-9. Service Lifecycle Details
-10. Build and Deploy
-11. Troubleshooting
-12. Security and Distribution Notes
-13. Open Source Collaboration
+### What It Does
+- shows your saved local services and their status (`Running`, `Stopped`, `Starting`, `Stopping`, `Error`)
+- lets you open/copy URLs quickly
+- can start, stop, restart, and force-stop services
+- supports profiles so you can group services per project/context
 
-## 1. Overview
+### Download and Install
+1. Open the latest release: `https://github.com/onderk-motion/LocalPorts/releases/latest`
+2. Download `LocalPorts-vX.Y.Z.zip` from the **Assets** section.
+3. Unzip the file.
+4. Drag `LocalPorts.app` into `/Applications`.
+5. Launch:
 
-LocalPorts is designed for developers who run multiple local services and want a single control panel in the menu bar.
+```bash
+open /Applications/LocalPorts.app
+```
 
-Current app metadata:
-- Bundle ID: `com.localports.app`
-- Version: `1.0 (1)`
-- Minimum macOS target: `13.0`
-- App mode: menu bar accessory (`LSUIElement = true`)
+If macOS blocks first launch, Control-click `LocalPorts.app` in Finder, choose `Open`, then confirm.
 
-## 2. Core Features
+### Which Release File Should I Download?
+- `LocalPorts-vX.Y.Z.zip`: the app package you should install
+- `LocalPorts-vX.Y.Z.zip.sha256`: optional integrity checksum
+- `Source code (zip/tar.gz)`: source snapshot only, not a runnable app
 
-### Menu Bar Interaction
-- Left click menu bar icon: opens/closes the services popover.
-- Right click (or Control-click) menu bar icon: opens context menu with:
-  - `Settings`
-  - `Quit`
+Optional checksum verification:
 
-### Services Panel
-- Lists saved services under `Services` within the active profile.
-- Profile menu supports:
-  - switch profile
-  - create profile
-  - rename current profile
-  - delete current profile (when more than one exists)
-- Each card shows:
-  - name
-  - URL
-  - runtime state (`Running`, `Stopped`, `Starting`, `Stopping`, `Error`)
-  - health indicator (`Healthy`, `Checking`, `Unhealthy`) while running
-- Card actions:
-  - `Open` (browser)
-  - `Copy URL`
-  - `Start` / `Stop`
-  - `More` menu:
-    - `Rename`
-    - `Reset Name` (if renamed)
-    - `Restart` (if start is configured)
-    - `Show in Finder` (if project folder exists)
-    - `Edit`
-    - `Force Stop`
-    - `Remove Card` (custom services only)
-
-### Add and Edit Service Cards
-- Add custom service via `+` button.
-- Edit existing service via card menu `Edit`.
-- Folder selection supports Finder picker (`Browse...`).
-- Start command presets are available (`npm run dev`, `pnpm dev`, `yarn dev`, `node server.js`).
-- `Test Command` checks folder/command validity before save.
-- Optional per-service health check URL can be configured.
-
-Validation rules:
-- service name required (for new custom service)
-- address must be valid and include explicit port
-- health check address is optional, but if provided it must be localhost with explicit port
-- only `localhost`, `127.0.0.1`, `::1` hosts are allowed
-- port must be unique across saved services
-- `Project Folder` and `Start Command` must be provided together
-
-### Startup and Background Behavior
-- App periodically refreshes listening ports every 2 seconds.
-- On launch, startable saved services can be auto-started if not already running.
-- Health checks run on active services at a throttled interval.
-- Optional launch behavior:
-  - `Start LocalPorts app on login`
-  - `Launch in the background`
-- If onboarding is not completed, services popover opens on launch once.
-
-### Configuration Backup
-- Export the full app configuration to a JSON file from Settings.
-- Import configuration JSON from Settings; imported content is sanitized before being saved.
-- Imported start commands are locked by default (`review mode`) until user clicks `Trust Config`.
-- Quick access to the active config file is available via `Show Config File`.
-
-### Diagnostics for Start Failures
-When a start command fails (or exits immediately), LocalPorts writes diagnostics to:
-- `~/Library/Logs/LocalPorts/<service-id>.log`
-
-Log entries include:
-- timestamp
-- service id and name
-- working directory
-- executed shell command (sensitive values redacted)
-- exit status
-- stdout (redacted and truncated)
-- stderr (redacted and truncated)
-
-## 3. Requirements
-
-- macOS 13+
-- Xcode 15+ (Xcode 16+ also works)
-- Swift 5 toolchain
-- `lsof` available at `/usr/sbin/lsof` (default on macOS)
-
-Optional for managed starts:
-- Node/npm or any runtime your service command needs
-- project folders must exist locally
-
-## 4. Quick Start
-
-### For End Users (No Xcode Required)
-1. Open the latest release page:
-   - `https://github.com/onderk-motion/LocalPorts/releases/latest`
-2. Download:
-   - `LocalPorts-vX.Y.Z.zip`
-   - `LocalPorts-vX.Y.Z.zip.sha256` (optional integrity check)
-3. (Optional) Verify download integrity:
 ```bash
 cd ~/Downloads
 shasum -a 256 -c LocalPorts-vX.Y.Z.zip.sha256
 ```
-4. Unzip `LocalPorts-vX.Y.Z.zip`.
-5. Drag `LocalPorts.app` into `/Applications`.
-6. Start app:
+
+### First 2 Minutes
+1. Click the LocalPorts icon in the menu bar.
+2. Review built-in cards and update folder/command fields if needed.
+3. Add your own service with `+`.
+4. Set `Address` (`http://localhost:PORT`), then optionally `Project Folder` + `Start Command`.
+5. Use `Test Command` before saving.
+6. Use `Refresh` to trigger an immediate port scan.
+
+### Core Usage
+- Left click menu bar icon: open/close the services popover.
+- Right click (or Control-click) icon: open `Settings` and `Quit`.
+- Card actions: `Open` (browser), `Copy`, `Start`/`Stop`, `More` (rename/restart/edit/show in Finder/force stop/remove custom card).
+
+### Common Problems
+
+#### "Application is not supported on this Mac"
+- usually caused by downloading `Source code (zip)` instead of release asset
+- requires macOS `13.0+`
+- use recent release assets (`v1.0.2+`) for universal Intel + Apple Silicon builds
+
+#### Service does not start
+- open diagnostics in Settings, or inspect:
+
 ```bash
-open /Applications/LocalPorts.app
+tail -n 200 ~/Library/Logs/LocalPorts/*.log
 ```
-7. If macOS blocks first launch, Control-click the app in Finder, choose `Open`, then confirm.
 
-Compatibility:
-- Supports both Apple Silicon and Intel from `v1.0.2+` release assets.
-- Minimum macOS version: `13.0`.
+Likely causes: invalid folder path, missing runtime (`npm`, `pnpm`, etc.), or command exits immediately.
 
-### For Developers
-1. Open `LocalPorts.xcodeproj`.
-2. Build and run (`LocalPorts` scheme).
-3. Add/Edit services and verify start/stop flow.
+## Features
 
-### For Vibe Coders
-1. Click `+` to add a service card.
-2. Set `Address` (`http://localhost:PORT`).
-3. Choose `Project Folder`.
-4. Pick a command preset or write your command.
-5. Click `Test Command`, then `Add Card`.
+- menu bar-first workflow (`LSUIElement` accessory app)
+- profile support (create, rename, switch, delete)
+- service cards with status + health checks
+- command presets (`npm run dev`, `pnpm dev`, `yarn dev`, `node server.js`)
+- startup options: `Start LocalPorts app on login`, `Launch in the background`
+- config export/import with safety checks
+- imported commands require explicit trust before start
+- start failure diagnostics with secret redaction
 
-### Xcode
+## Requirements
+
+- macOS `13.0+`
+- for managed starts: required runtime for your command (`node`, `npm`, `pnpm`, etc.)
+- `lsof` at `/usr/sbin/lsof` (default on macOS)
+
+## Data, Config, and Logs
+
+- main config file: `~/Library/Application Support/com.localports.app/config.v1.json`
+- automatic backup: `~/Library/Application Support/com.localports.app/config.v1.json.bak`
+- diagnostics logs: `~/Library/Logs/LocalPorts/<service-id>.log`
+
+Config import/export is available from Settings (`Configuration Backup`).
+
+## Developer Guide
+
+### Local Build (Xcode)
 1. Open `LocalPorts.xcodeproj`.
 2. Select scheme `LocalPorts`.
-3. Run.
+3. Build and run.
 
-### Command Line Build
+### Local Build (CLI)
+
 ```bash
 cd "<repo-root>"
 xcodebuild -project LocalPorts.xcodeproj -scheme LocalPorts -configuration Debug build
 ```
 
-### Run Installed App (if copied to /Applications)
-```bash
-open /Applications/LocalPorts.app
-```
+### Release Build (Unsigned)
 
-## 5. How to Use
-
-### First Launch Checklist
-1. Open popover from menu bar icon.
-2. Review built-in cards and update them from `Edit` if folder/command paths are not valid on your machine.
-3. Add your own services via `+`.
-4. Use `Refresh` to rescan ports immediately.
-
-### Start/Stop Flow
-- `Play` button starts service if `Project Folder + Start Command` are configured.
-- If imported config is in review mode, start is blocked until `Trust Config`.
-- `Stop` sends `SIGTERM`.
-- `Force Stop` sends `SIGKILL`.
-- `Restart` performs stop then start.
-
-### Rename Behavior
-- Rename is display-only and stored separately.
-- Resetting name restores original configured service name.
-
-### Finder Integration
-- `Show in Finder` opens configured project folder directly.
-
-## 6. Settings
-
-Open from:
-- right click menu bar icon -> `Settings`
-
-Available options:
-- `Start LocalPorts app on login`
-  - Uses `ServiceManagement` (`SMAppService.mainApp`) to register/unregister login item.
-- `Launch in the background`
-  - On: app stays in menu bar on startup.
-  - Off: app opens services popover shortly after launch.
-
-Settings panel also includes:
-- startup explanations
-- onboarding reset button (`Show onboarding again`)
-- configuration backup tools (`Export`, `Import`, `Show Config File`)
-- diagnostics log tools (`Refresh`, `Open Folder`, `Clear`, per-file `Open`)
-- quick usage guide
-- tips
-- version and mode information
-
-## 7. Data Persistence
-
-LocalPorts now stores runtime configuration in a versioned JSON file:
-- `~/Library/Application Support/com.localports.app/config.v1.json`
-- automatic backup: `config.v1.json.bak`
-
-Config includes:
-- app settings (for example `launchInBackground`)
-- onboarding completion state
-- selected profile id
-- all profiles and their services
-- per-service custom display names
-- optional per-service health check URL
-- migration metadata
-
-You can export and import this JSON from Settings (`Configuration Backup`). Imported files are sanitized (missing built-ins are restored, invalid profile references are corrected).
-
-### Legacy Migration
-On first run after this change, LocalPorts automatically migrates legacy `UserDefaults` keys into `config.v1.json`:
-- `PinnedServiceNames.v1`
-- `CustomServices.v1`
-- `BuiltInServiceOverrides.v1`
-- `LaunchInBackground.v1`
-
-Legacy compatibility metadata is written to config and kept for a limited compatibility window.
-
-## 8. Project Structure
-
-```text
-App/
-  AppDelegate.swift
-  LocalPortsApp.swift
-  StatusBarController.swift
-  Models/
-    ListeningPort.swift
-  Services/
-    LsofService.swift
-    ActionsService.swift
-    ManagedServiceController.swift
-  ViewModels/
-    PortsViewModel.swift
-  Views/
-    PortsPopoverView.swift
-  Assets.xcassets/
-  Info.plist
-
-LocalPorts.xcodeproj/
-README.md
-```
-
-## 9. Service Lifecycle Details
-
-### Discovery
-- `LsofService` runs:
-  - `/usr/sbin/lsof -nP -iTCP -sTCP:LISTEN`
-- Parses rows, extracts `host:port`, filters to local/unknown host classes.
-
-### Start Command Execution
-- Managed starts run through:
-  - `/bin/zsh -lc "<command>"`
-- Process working directory is set to configured `Project Folder`.
-- PATH is prefixed with:
-  - `/usr/local/bin:/opt/homebrew/bin:$PATH:$PWD`
-
-### Script Convenience
-If first token in start command is a local file in working directory (for example `start.sh`), it is rewritten to `./start.sh` automatically.
-
-### Auto Refresh and Auto Start
-- periodic refresh timer every 2 seconds
-- one-time launch auto-start attempt for startable services that are not already listening
-- auto-start is paused when imported config requires trust approval
-
-## 10. Build and Deploy
-
-### Download from GitHub Releases (Recommended for most users)
-- Open: `https://github.com/onderk-motion/LocalPorts/releases/latest`
-- Download the release `.zip` asset (not `Source code (zip)`).
-- Move `LocalPorts.app` to `/Applications` and launch.
-
-### Release Build
 ```bash
 cd "<repo-root>"
 xcodebuild -project LocalPorts.xcodeproj \
@@ -314,98 +120,46 @@ xcodebuild -project LocalPorts.xcodeproj \
   build
 ```
 
-### Install to /Applications
-```bash
-ditto \
-  "$HOME/Library/Developer/Xcode/DerivedData/<DerivedDataFolder>/Build/Products/Release/LocalPorts.app" \
-  "/Applications/LocalPorts.app"
-```
+### CI and Release Automation
+- CI workflow: `.github/workflows/ci.yml`
+- local CI-equivalent smoke command:
 
-### Verify Running Path
-```bash
-pgrep -fl '/Applications/LocalPorts.app/Contents/MacOS/LocalPorts'
-```
-
-### CI (GitHub Actions)
-- Workflow: `.github/workflows/ci.yml`
-- Local equivalent:
 ```bash
 ./scripts/ci-smoke.sh
 ```
 
-## 11. Troubleshooting
+- release workflow: `.github/workflows/release.yml`
+- release assets are created on tag push (`v*`) as `LocalPorts-vX.Y.Z.zip` and `LocalPorts-vX.Y.Z.zip.sha256`
 
-### "Application is not supported on this Mac"
-Common causes:
-- app was downloaded as `Source code (zip)` instead of release app asset
-- machine is below macOS `13.0`
-- old single-architecture asset (pre-`v1.0.2`)
+## Project Structure
 
-Fix:
-- download `LocalPorts-vX.Y.Z.zip` from Releases assets
-- use latest release (`v1.0.2+`) for Intel + Apple Silicon support
-- confirm macOS version is `13.0+`
+```text
+App/
+  AppDelegate.swift
+  LocalPortsApp.swift
+  StatusBarController.swift
+  Models/
+  Services/
+  ViewModels/
+  Views/
+  Assets.xcassets/
+  Info.plist
 
-### Settings or UI Looks Outdated
-Likely an old app bundle is running.
-
-Check:
-```bash
-pgrep -fl LocalPorts
-ls -la /Applications/LocalPorts.app/Contents/MacOS/LocalPorts
+LocalPorts.xcodeproj/
+scripts/
+README.md
 ```
 
-Reinstall app from latest build and reopen.
+## Security and Distribution Notes
 
-### Service Fails to Start
-Check diagnostics:
-```bash
-tail -n 200 ~/Library/Logs/LocalPorts/*.log
-```
+- imported config files are sanitized before save
+- imported start commands are locked until user trust confirmation
+- logs redact common token/secret patterns
+- for public distribution without warnings: sign with Developer ID and notarize via Apple
 
-Typical causes:
-- invalid project folder path
-- missing runtime (`npm`, etc.) in PATH
-- command exits immediately with error
-- command requires env vars not set in shell
+## Open Source Collaboration
 
-### Icon Not Updating in Finder/Dock
-macOS icon cache can be stale.
-
-Try:
-```bash
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f -R -trusted /Applications/LocalPorts.app
-killall Finder || true
-killall Dock || true
-killall iconservicesagent || true
-```
-
-### Login Item Toggle Fails
-- Requires macOS 13+
-- Can fail due to app registration/signing context
-- App surfaces error message in Settings panel
-
-## 12. Security and Distribution Notes
-
-- Config imports are sanitized; start commands from imported config require explicit trust.
-- Diagnostics redact common secret/token patterns before writing logs.
-- Local/development signing may still trigger Gatekeeper warnings on other machines.
-- For broad distribution without warning dialogs, use:
-  - Developer ID signing
-  - Apple notarization
-
----
-
-## 13. Open Source Collaboration
-
-Project governance files:
 - `LICENSE`
 - `CONTRIBUTING.md`
 - `CODE_OF_CONDUCT.md`
 - `SECURITY.md`
-
-GitHub templates and automation:
-- Issue templates: `.github/ISSUE_TEMPLATE/`
-- PR template: `.github/pull_request_template.md`
-- CI workflow: `.github/workflows/ci.yml`
-- Release workflow: `.github/workflows/release.yml`
