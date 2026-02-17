@@ -1,12 +1,18 @@
 # LocalPorts
 
-LocalPorts is a macOS menu bar application for monitoring and controlling local development services on `localhost`.
+LocalPorts is a macOS menu bar app that helps you manage your local projects from one place.
 
-It combines:
-- port discovery via `lsof`
-- one-click service actions (open, copy URL, start, stop, restart, force stop)
-- editable saved service cards (including custom project folders and start commands)
-- a menu bar-first workflow (`LSUIElement` app, no Dock presence by default)
+Instead of juggling multiple terminal tabs, you can see which local apps are running and control them from the menu bar:
+- see service status (`Running` / `Stopped`)
+- open local URL in browser
+- start, stop, restart, or force-stop services
+- save project folder + command once, then launch with one click
+
+Who this is for:
+- developers running multiple local frontend/backend services
+- users who want a simple "open app and click start" workflow
+
+No Xcode is required to use the app from Releases.
 
 ## Table of Contents
 1. Overview
@@ -122,6 +128,29 @@ Optional for managed starts:
 - project folders must exist locally
 
 ## 4. Quick Start
+
+### For End Users (No Xcode Required)
+1. Open the latest release page:
+   - `https://github.com/onderk-motion/LocalPorts/releases/latest`
+2. Download:
+   - `LocalPorts-vX.Y.Z.zip`
+   - `LocalPorts-vX.Y.Z.zip.sha256` (optional integrity check)
+3. (Optional) Verify download integrity:
+```bash
+cd ~/Downloads
+shasum -a 256 -c LocalPorts-vX.Y.Z.zip.sha256
+```
+4. Unzip `LocalPorts-vX.Y.Z.zip`.
+5. Drag `LocalPorts.app` into `/Applications`.
+6. Start app:
+```bash
+open /Applications/LocalPorts.app
+```
+7. If macOS blocks first launch, Control-click the app in Finder, choose `Open`, then confirm.
+
+Compatibility:
+- Supports both Apple Silicon and Intel from `v1.0.2+` release assets.
+- Minimum macOS version: `13.0`.
 
 ### For Developers
 1. Open `LocalPorts.xcodeproj`.
@@ -268,6 +297,11 @@ If first token in start command is a local file in working directory (for exampl
 
 ## 10. Build and Deploy
 
+### Download from GitHub Releases (Recommended for most users)
+- Open: `https://github.com/onderk-motion/LocalPorts/releases/latest`
+- Download the release `.zip` asset (not `Source code (zip)`).
+- Move `LocalPorts.app` to `/Applications` and launch.
+
 ### Release Build
 ```bash
 cd "<repo-root>"
@@ -294,6 +328,17 @@ pgrep -fl '/Applications/LocalPorts.app/Contents/MacOS/LocalPorts'
 ```
 
 ## 11. Troubleshooting
+
+### "Application is not supported on this Mac"
+Common causes:
+- app was downloaded as `Source code (zip)` instead of release app asset
+- machine is below macOS `13.0`
+- old single-architecture asset (pre-`v1.0.2`)
+
+Fix:
+- download `LocalPorts-vX.Y.Z.zip` from Releases assets
+- use latest release (`v1.0.2+`) for Intel + Apple Silicon support
+- confirm macOS version is `13.0+`
 
 ### Settings or UI Looks Outdated
 Likely an old app bundle is running.
