@@ -8,6 +8,14 @@ Most people should install LocalPorts from GitHub Releases. Developer build deta
 
 ## End User Guide (Releases)
 
+### What's New in v1.0.3
+- easier access to settings: new `Settings` (gear) button next to `Refresh` in the popover footer
+- optional process details on cards (`process` + `user`) from `Settings > Browser & Display`
+- browser control improvements:
+  - choose a global browser for the `Open` button
+  - optionally set a different browser per service in Add/Edit
+- cleaner service status text for better readability, with full details available on hover tooltip
+
 ### What It Does
 - shows your saved local services and their status (`Running`, `Stopped`, `Starting`, `Stopping`, `Error`)
 - lets you open/copy URLs quickly
@@ -50,6 +58,7 @@ shasum -a 256 -c LocalPorts-vX.Y.Z.zip.sha256
 ### Core Usage
 - Left click menu bar icon: open/close the services popover.
 - Right click (or Control-click) icon: open `Settings` and `Quit`.
+- Use the footer buttons: `Refresh`, `Settings`, `+` (add service), `Quit`.
 - Card actions: `Open` (browser), `Copy`, `Start`/`Stop`, `More` (rename/restart/edit/show in Finder/force stop/remove custom card).
 
 ### Common Problems
@@ -73,6 +82,10 @@ Likely causes: invalid folder path, missing runtime (`npm`, `pnpm`, etc.), or co
 - menu bar-first workflow (`LSUIElement` accessory app)
 - profile support (create, rename, switch, delete)
 - service cards with status + health checks
+- optional process details in card status line (`process` + `user`)
+- browser preferences:
+  - global browser for `Open`
+  - per-service browser override in Add/Edit
 - command presets (`npm run dev`, `pnpm dev`, `yarn dev`, `node server.js`)
 - startup options: `Start LocalPorts app on login`, `Launch in the background`
 - config export/import with safety checks

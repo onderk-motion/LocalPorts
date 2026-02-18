@@ -231,6 +231,15 @@ struct PortsPopoverView: View {
             .buttonStyle(.borderedProminent)
 
             Button {
+                NotificationCenter.default.post(name: .localPortsOpenSettingsRequested, object: nil)
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .help("Settings")
+
+            Button {
                 showAddServiceSheet = true
             } label: {
                 Image(systemName: "plus")
@@ -267,16 +276,30 @@ struct PortsPopoverView: View {
             }
 
             HStack(alignment: .center, spacing: 8) {
-                Circle()
-                    .fill(healthIndicatorColor(for: service.health, isRunning: isRunning))
-                    .frame(width: 8, height: 8)
-                    .help(viewModel.healthText(for: service.health))
+                HStack(alignment: .top, spacing: 8) {
+                    Circle()
+                        .fill(healthIndicatorColor(for: service.health, isRunning: isRunning))
+                        .frame(width: 8, height: 8)
+                        .padding(.top, 4)
+                        .help(viewModel.healthText(for: service.health))
 
-                Text(verbatim: viewModel.statusSummary(for: service))
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.68))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: viewModel.primaryStatusSummary(for: service))
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.70))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        if let secondary = viewModel.secondaryStatusSummary(for: service) {
+                            Text(verbatim: secondary)
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.58))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
+                    .help(viewModel.statusTooltip(for: service))
+                }
 
                 Spacer(minLength: 0)
 
@@ -557,6 +580,8 @@ private struct AddServiceSheet: View {
     @State private var healthCheckURL: String = ""
     @State private var workingDirectory: String = ""
     @State private var startCommand: String = ""
+    @State private var useGlobalBrowser: Bool = true
+    @State private var selectedBrowserBundleID: String = ""
     @State private var errorMessage: String?
     @State private var validationMessage: String?
     @State private var validationIsError = false
@@ -567,6 +592,10 @@ private struct AddServiceSheet: View {
         CommandPreset(id: "yarn-dev", title: "yarn dev", command: "yarn dev"),
         CommandPreset(id: "node-server", title: "node server", command: "node server.js")
     ]
+
+    private var browsers: [ActionsService.BrowserOption] {
+        viewModel.availableBrowsers()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -580,6 +609,7 @@ private struct AddServiceSheet: View {
             field("Start Command (Optional)", text: $startCommand, placeholder: "npm run dev")
             commandPresetBar
             commandValidationRow
+            browserSection
 
             Text("Start requires both Project Folder and Start Command.")
                 .font(.caption)
@@ -607,6 +637,14 @@ private struct AddServiceSheet: View {
         }
         .padding(18)
         .frame(width: 460)
+        .onAppear {
+            ensureBrowserSelection()
+        }
+        .onChange(of: useGlobalBrowser) { newValue in
+            if !newValue {
+                ensureBrowserSelection()
+            }
+        }
     }
 
     private var commandPresetBar: some View {
@@ -673,6 +711,30 @@ private struct AddServiceSheet: View {
         }
     }
 
+    private var browserSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Use browser from Settings", isOn: $useGlobalBrowser)
+                .font(.caption.weight(.semibold))
+
+            if !useGlobalBrowser {
+                if browsers.isEmpty {
+                    Text("No browsers were detected. Enable this toggle to use system/default behavior.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Picker("Browser for this service", selection: $selectedBrowserBundleID) {
+                        ForEach(browsers) { browser in
+                            Text(browser.name).tag(browser.bundleIdentifier)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+            }
+        }
+    }
+
     private func chooseProjectFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -691,13 +753,20 @@ private struct AddServiceSheet: View {
     }
 
     private func addService() {
+        guard useGlobalBrowser || !selectedBrowserBundleID.isEmpty else {
+            errorMessage = "Choose a browser for this service or enable browser from Settings."
+            return
+        }
+
         do {
             try viewModel.addCustomService(
                 name: name,
                 address: address,
                 healthCheckURL: healthCheckURL,
                 workingDirectory: workingDirectory,
-                startCommand: startCommand
+                startCommand: startCommand,
+                useGlobalBrowser: useGlobalBrowser,
+                selectedBrowserBundleID: useGlobalBrowser ? nil : selectedBrowserBundleID
             )
             isPresented = false
         } catch {
@@ -719,6 +788,12 @@ private struct AddServiceSheet: View {
             validationIsError = true
         }
     }
+
+    private func ensureBrowserSelection() {
+        if selectedBrowserBundleID.isEmpty {
+            selectedBrowserBundleID = browsers.first?.bundleIdentifier ?? ""
+        }
+    }
 }
 
 private struct EditServiceSheet: View {
@@ -736,6 +811,8 @@ private struct EditServiceSheet: View {
     @State private var healthCheckURL: String
     @State private var workingDirectory: String
     @State private var startCommand: String
+    @State private var useGlobalBrowser: Bool
+    @State private var selectedBrowserBundleID: String
     @State private var errorMessage: String?
     @State private var validationMessage: String?
     @State private var validationIsError = false
@@ -747,6 +824,10 @@ private struct EditServiceSheet: View {
         CommandPreset(id: "node-server", title: "node server", command: "node server.js")
     ]
 
+    private var browsers: [ActionsService.BrowserOption] {
+        viewModel.availableBrowsers()
+    }
+
     init(viewModel: PortsViewModel, serviceData: PortsViewModel.ServiceEditorData) {
         self.viewModel = viewModel
         self.serviceData = serviceData
@@ -754,6 +835,8 @@ private struct EditServiceSheet: View {
         _healthCheckURL = State(initialValue: serviceData.healthCheckURL)
         _workingDirectory = State(initialValue: serviceData.workingDirectory)
         _startCommand = State(initialValue: serviceData.startCommand)
+        _useGlobalBrowser = State(initialValue: serviceData.usesGlobalBrowser)
+        _selectedBrowserBundleID = State(initialValue: serviceData.browserBundleID ?? "")
     }
 
     var body: some View {
@@ -771,6 +854,7 @@ private struct EditServiceSheet: View {
             field("Start Command (Optional)", text: $startCommand, placeholder: "npm run dev")
             commandPresetBar
             commandValidationRow
+            browserSection
 
             Text("Start requires both Project Folder and Start Command.")
                 .font(.caption)
@@ -798,6 +882,14 @@ private struct EditServiceSheet: View {
         }
         .padding(18)
         .frame(width: 460)
+        .onAppear {
+            ensureBrowserSelection()
+        }
+        .onChange(of: useGlobalBrowser) { newValue in
+            if !newValue {
+                ensureBrowserSelection()
+            }
+        }
     }
 
     private var commandPresetBar: some View {
@@ -864,6 +956,30 @@ private struct EditServiceSheet: View {
         }
     }
 
+    private var browserSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Use browser from Settings", isOn: $useGlobalBrowser)
+                .font(.caption.weight(.semibold))
+
+            if !useGlobalBrowser {
+                if browsers.isEmpty {
+                    Text("No browsers were detected. Enable this toggle to use system/default behavior.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Picker("Browser for this service", selection: $selectedBrowserBundleID) {
+                        ForEach(browsers) { browser in
+                            Text(browser.name).tag(browser.bundleIdentifier)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+            }
+        }
+    }
+
     private func chooseProjectFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -882,13 +998,20 @@ private struct EditServiceSheet: View {
     }
 
     private func save() {
+        guard useGlobalBrowser || !selectedBrowserBundleID.isEmpty else {
+            errorMessage = "Choose a browser for this service or enable browser from Settings."
+            return
+        }
+
         do {
             try viewModel.updateService(
                 id: serviceData.id,
                 address: address,
                 healthCheckURL: healthCheckURL,
                 workingDirectory: workingDirectory,
-                startCommand: startCommand
+                startCommand: startCommand,
+                useGlobalBrowser: useGlobalBrowser,
+                selectedBrowserBundleID: useGlobalBrowser ? nil : selectedBrowserBundleID
             )
             dismiss()
         } catch {
@@ -908,6 +1031,12 @@ private struct EditServiceSheet: View {
         } catch {
             validationMessage = error.localizedDescription
             validationIsError = true
+        }
+    }
+
+    private func ensureBrowserSelection() {
+        if selectedBrowserBundleID.isEmpty {
+            selectedBrowserBundleID = browsers.first?.bundleIdentifier ?? ""
         }
     }
 }

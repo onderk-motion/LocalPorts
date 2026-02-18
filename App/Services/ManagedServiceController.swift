@@ -9,6 +9,7 @@ struct ManagedServiceConfiguration: Sendable, Codable, Hashable {
     let urlString: String
     let healthCheckURLString: String?
     let startCommand: [String]?
+    let preferredBrowserBundleID: String?
     let isBuiltIn: Bool
 
     var canStart: Bool {
@@ -23,6 +24,7 @@ struct ManagedServiceConfiguration: Sendable, Codable, Hashable {
         urlString: "http://localhost:5173",
         healthCheckURLString: nil,
         startCommand: nil,
+        preferredBrowserBundleID: nil,
         isBuiltIn: true
     )
 
@@ -34,6 +36,7 @@ struct ManagedServiceConfiguration: Sendable, Codable, Hashable {
         urlString: "http://localhost:5175",
         healthCheckURLString: nil,
         startCommand: nil,
+        preferredBrowserBundleID: nil,
         isBuiltIn: true
     )
 
@@ -45,6 +48,7 @@ struct ManagedServiceConfiguration: Sendable, Codable, Hashable {
         urlString: "http://localhost:5120",
         healthCheckURLString: nil,
         startCommand: nil,
+        preferredBrowserBundleID: nil,
         isBuiltIn: true
     )
 }

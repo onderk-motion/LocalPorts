@@ -22,6 +22,8 @@ final class PortsViewModel: ObservableObject {
         let healthCheckURL: String
         let workingDirectory: String
         let startCommand: String
+        let usesGlobalBrowser: Bool
+        let browserBundleID: String?
     }
 
     struct ProfileSummary: Identifiable {
@@ -48,6 +50,8 @@ final class PortsViewModel: ObservableObject {
     @Published private(set) var hasCompletedOnboarding: Bool = false
     @Published private(set) var requiresImportedStartApproval: Bool = false
     @Published private(set) var healthStates: [String: ServiceHealthState] = [:]
+    @Published private(set) var showProcessDetails: Bool = false
+    @Published private(set) var preferredBrowserBundleID: String?
 
     var serviceSnapshots: [ServiceSnapshot] {
         serviceConfigurations.map { config in
@@ -260,13 +264,20 @@ final class PortsViewModel: ObservableObject {
 
     func openService(_ id: String) {
         guard let config = serviceConfiguration(for: id) else { return }
-        ActionsService.shared.openInBrowser(urlString: config.urlString)
+        ActionsService.shared.openInBrowser(
+            urlString: config.urlString,
+            browserBundleID: resolvedBrowserBundleID(for: config)
+        )
     }
 
     func copyServiceURL(_ id: String) {
         guard let config = serviceConfiguration(for: id) else { return }
         ActionsService.shared.copyURL(urlString: config.urlString)
         statusMessage = "\(config.name) URL copied"
+    }
+
+    func availableBrowsers() -> [ActionsService.BrowserOption] {
+        ActionsService.shared.availableBrowsers()
     }
 
     func serviceEditorData(for id: String) -> ServiceEditorData? {
@@ -278,7 +289,9 @@ final class PortsViewModel: ObservableObject {
             address: config.urlString,
             healthCheckURL: config.healthCheckURLString ?? "",
             workingDirectory: config.workingDirectory ?? "",
-            startCommand: commandLineString(from: config.startCommand)
+            startCommand: commandLineString(from: config.startCommand),
+            usesGlobalBrowser: config.preferredBrowserBundleID == nil,
+            browserBundleID: config.preferredBrowserBundleID
         )
     }
 
@@ -520,7 +533,9 @@ final class PortsViewModel: ObservableObject {
         address: String,
         healthCheckURL: String,
         workingDirectory: String,
-        startCommand: String
+        startCommand: String,
+        useGlobalBrowser: Bool,
+        selectedBrowserBundleID: String?
     ) throws {
         guard let index = serviceConfigurations.firstIndex(where: { $0.id == id }) else { return }
         let current = serviceConfigurations[index]
@@ -568,6 +583,10 @@ final class PortsViewModel: ObservableObject {
             urlString: normalizedURL,
             healthCheckURLString: normalizedHealthCheckURL,
             startCommand: commandParts,
+            preferredBrowserBundleID: normalizedBrowserBundleID(
+                useGlobalBrowser: useGlobalBrowser,
+                selectedBrowserBundleID: selectedBrowserBundleID
+            ),
             isBuiltIn: current.isBuiltIn
         )
 
@@ -585,7 +604,9 @@ final class PortsViewModel: ObservableObject {
         address: String,
         healthCheckURL: String,
         workingDirectory: String,
-        startCommand: String
+        startCommand: String,
+        useGlobalBrowser: Bool,
+        selectedBrowserBundleID: String?
     ) throws {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
@@ -638,6 +659,10 @@ final class PortsViewModel: ObservableObject {
             urlString: normalizedURL,
             healthCheckURLString: normalizedHealthCheckURL,
             startCommand: commandParts,
+            preferredBrowserBundleID: normalizedBrowserBundleID(
+                useGlobalBrowser: useGlobalBrowser,
+                selectedBrowserBundleID: selectedBrowserBundleID
+            ),
             isBuiltIn: false
         )
 
@@ -814,6 +839,34 @@ final class PortsViewModel: ObservableObject {
         }
     }
 
+    func statusTooltip(for service: ServiceSnapshot) -> String {
+        var lines: [String] = ["Address: \(service.url)"]
+
+        switch service.state {
+        case .running(let pid):
+            lines.append("State: Running")
+            lines.append("PID: \(pid)")
+
+            if let activePort = ports.first(where: { $0.port == service.port }) {
+                lines.append("Process: \(activePort.processDisplayName)")
+                lines.append("User: \(activePort.user)")
+            }
+
+            lines.append("Health: \(healthText(for: service.health))")
+        case .stopped:
+            lines.append("State: Stopped")
+        case .starting:
+            lines.append("State: Starting")
+        case .stopping:
+            lines.append("State: Stopping")
+        case .failed(let message):
+            lines.append("State: Error")
+            lines.append("Reason: \(message)")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
     func healthText(for state: ServiceHealthState) -> String {
         switch state {
         case .unavailable:
@@ -832,12 +885,31 @@ final class PortsViewModel: ObservableObject {
         }
     }
 
-    func statusSummary(for service: ServiceSnapshot) -> String {
-        var parts: [String] = [service.url, stateText(for: service.state)]
-        if isRunning(service.id) {
+    func primaryStatusSummary(for service: ServiceSnapshot) -> String {
+        var parts: [String] = [shortAddressText(for: service.url, fallbackPort: service.port)]
+
+        switch service.state {
+        case .running(let pid):
+            parts.append("Running")
+            parts.append("pid \(pid)")
             parts.append(healthText(for: service.health))
+        case .stopped:
+            parts.append("Stopped")
+        case .starting:
+            parts.append("Starting")
+        case .stopping:
+            parts.append("Stopping")
+        case .failed:
+            parts.append("Error")
         }
+
         return parts.joined(separator: " · ")
+    }
+
+    func secondaryStatusSummary(for service: ServiceSnapshot) -> String? {
+        guard showProcessDetails else { return nil }
+        guard case .running = service.state else { return nil }
+        return processDetailsText(for: service)
     }
 
     func isRunning(_ serviceID: String) -> Bool {
@@ -850,6 +922,51 @@ final class PortsViewModel: ObservableObject {
     private func pid(forServiceID id: String) -> Int? {
         guard let config = serviceConfiguration(for: id) else { return nil }
         return ports.first(where: { $0.port == config.port })?.pid
+    }
+
+    private func processDetailsText(for service: ServiceSnapshot) -> String? {
+        guard let activePort = ports.first(where: { $0.port == service.port }) else {
+            return nil
+        }
+        return "\(activePort.processDisplayName) · user \(activePort.user)"
+    }
+
+    private func shortAddressText(for urlString: String, fallbackPort: Int) -> String {
+        guard let url = URL(string: urlString) else {
+            return "localhost:\(fallbackPort)"
+        }
+
+        if let host = url.host(), let port = url.port {
+            return "\(host):\(port)"
+        }
+
+        return "localhost:\(fallbackPort)"
+    }
+
+    private func normalizedBrowserBundleID(useGlobalBrowser: Bool, selectedBrowserBundleID: String?) -> String? {
+        guard !useGlobalBrowser else {
+            return nil
+        }
+        guard let selectedBrowserBundleID else {
+            return nil
+        }
+
+        let trimmed = selectedBrowserBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func resolvedBrowserBundleID(for config: ManagedServiceConfiguration) -> String? {
+        if let preferred = config.preferredBrowserBundleID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !preferred.isEmpty {
+            return preferred
+        }
+
+        if let shared = preferredBrowserBundleID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !shared.isEmpty {
+            return shared
+        }
+
+        return nil
     }
 
     private func serviceConfiguration(for id: String) -> ManagedServiceConfiguration? {
@@ -896,6 +1013,9 @@ final class PortsViewModel: ObservableObject {
         activeProfileName = profile?.name ?? "Default"
         hasCompletedOnboarding = config.hasCompletedOnboarding
         requiresImportedStartApproval = config.appSettings.requiresImportedStartApproval
+        showProcessDetails = config.appSettings.showProcessDetails
+        let sharedBrowser = config.appSettings.preferredBrowserBundleID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        preferredBrowserBundleID = (sharedBrowser?.isEmpty == true) ? nil : sharedBrowser
 
         let services = profile?.serviceConfigurations ?? Self.defaultBuiltInServices
         serviceConfigurations = normalizeServices(services)
@@ -1415,6 +1535,7 @@ struct AppConfig: Codable, Equatable {
                         urlString: normalized.urlString,
                         healthCheckURLString: normalized.healthCheckURLString,
                         startCommand: normalized.startCommand,
+                        preferredBrowserBundleID: normalized.preferredBrowserBundleID,
                         isBuiltIn: false
                     )
                 )
@@ -1451,6 +1572,7 @@ struct AppConfig: Codable, Equatable {
                     urlString: rawCustom.urlString,
                     healthCheckURLString: trimToNil(rawCustom.healthCheckURLString),
                     startCommand: normalizeCommand(rawCustom.startCommand),
+                    preferredBrowserBundleID: trimToNil(rawCustom.preferredBrowserBundleID),
                     isBuiltIn: false
                 )
 
@@ -1491,6 +1613,7 @@ struct AppConfig: Codable, Equatable {
         }
 
         sanitized.profiles = rebuiltProfiles
+        sanitized.appSettings.preferredBrowserBundleID = trimToNil(sanitized.appSettings.preferredBrowserBundleID)
         if !sanitized.profiles.contains(where: { $0.id == sanitized.selectedProfileID }) {
             sanitized.selectedProfileID = sanitized.profiles.first?.id ?? "default"
         }
@@ -1528,6 +1651,7 @@ struct AppConfig: Codable, Equatable {
             urlString: overrideValue.urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? base.urlString : overrideValue.urlString,
             healthCheckURLString: trimToNil(overrideValue.healthCheckURLString),
             startCommand: normalizeCommand(overrideValue.startCommand),
+            preferredBrowserBundleID: trimToNil(overrideValue.preferredBrowserBundleID),
             isBuiltIn: true
         )
     }
@@ -1571,6 +1695,7 @@ struct AppConfig: Codable, Equatable {
             urlString: service.urlString.trimmingCharacters(in: .whitespacesAndNewlines),
             healthCheckURLString: trimToNil(service.healthCheckURLString),
             startCommand: normalizeCommand(service.startCommand),
+            preferredBrowserBundleID: trimToNil(service.preferredBrowserBundleID),
             isBuiltIn: service.isBuiltIn
         )
     }
@@ -1602,21 +1727,34 @@ struct AppProfile: Codable, Equatable, Identifiable {
 struct PersistedAppSettings: Codable, Equatable {
     var launchInBackground: Bool
     var requiresImportedStartApproval: Bool
+    var showProcessDetails: Bool
+    var preferredBrowserBundleID: String?
 
-    init(launchInBackground: Bool, requiresImportedStartApproval: Bool = false) {
+    init(
+        launchInBackground: Bool,
+        requiresImportedStartApproval: Bool = false,
+        showProcessDetails: Bool = false,
+        preferredBrowserBundleID: String? = nil
+    ) {
         self.launchInBackground = launchInBackground
         self.requiresImportedStartApproval = requiresImportedStartApproval
+        self.showProcessDetails = showProcessDetails
+        self.preferredBrowserBundleID = preferredBrowserBundleID
     }
 
     enum CodingKeys: String, CodingKey {
         case launchInBackground
         case requiresImportedStartApproval
+        case showProcessDetails
+        case preferredBrowserBundleID
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         launchInBackground = try container.decodeIfPresent(Bool.self, forKey: .launchInBackground) ?? true
         requiresImportedStartApproval = try container.decodeIfPresent(Bool.self, forKey: .requiresImportedStartApproval) ?? false
+        showProcessDetails = try container.decodeIfPresent(Bool.self, forKey: .showProcessDetails) ?? false
+        preferredBrowserBundleID = try container.decodeIfPresent(String.self, forKey: .preferredBrowserBundleID)
     }
 }
 
@@ -1806,6 +1944,7 @@ final class AppConfigStore {
 
 extension Notification.Name {
     static let localPortsConfigDidChange = Notification.Name("localPortsConfigDidChange")
+    static let localPortsOpenSettingsRequested = Notification.Name("localPortsOpenSettingsRequested")
 }
 
 struct LegacyMigrationService {
@@ -1855,6 +1994,7 @@ struct LegacyMigrationService {
                     urlString: override.urlString,
                     healthCheckURLString: override.healthCheckURLString,
                     startCommand: override.startCommand,
+                    preferredBrowserBundleID: override.preferredBrowserBundleID,
                     isBuiltIn: true
                 )
             }
@@ -1874,6 +2014,7 @@ struct LegacyMigrationService {
                         urlString: item.urlString,
                         healthCheckURLString: item.healthCheckURLString,
                         startCommand: item.startCommand,
+                        preferredBrowserBundleID: item.preferredBrowserBundleID,
                         isBuiltIn: true
                     )
                     continue
@@ -1888,6 +2029,7 @@ struct LegacyMigrationService {
                         urlString: item.urlString,
                         healthCheckURLString: item.healthCheckURLString,
                         startCommand: item.startCommand,
+                        preferredBrowserBundleID: item.preferredBrowserBundleID,
                         isBuiltIn: false
                     )
                 )
@@ -1911,6 +2053,7 @@ struct LegacyMigrationService {
                 urlString: item.urlString,
                 healthCheckURLString: item.healthCheckURLString,
                 startCommand: item.startCommand,
+                preferredBrowserBundleID: item.preferredBrowserBundleID,
                 isBuiltIn: false
             )
         }

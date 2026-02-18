@@ -22,6 +22,18 @@ final class AppSettingsStore: ObservableObject {
             persistLaunchPreference()
         }
     }
+    @Published var showProcessDetails: Bool {
+        didSet {
+            guard !isSyncingFromConfig else { return }
+            persistProcessDetailsPreference()
+        }
+    }
+    @Published var selectedBrowserBundleID: String? {
+        didSet {
+            guard !isSyncingFromConfig else { return }
+            persistPreferredBrowser()
+        }
+    }
     @Published private(set) var startOnLoginEnabled: Bool
     @Published private(set) var startOnLoginErrorMessage: String?
     @Published private(set) var hasCompletedOnboarding: Bool
@@ -29,6 +41,7 @@ final class AppSettingsStore: ObservableObject {
     @Published private(set) var configActionMessage: String?
     @Published private(set) var diagnosticsActionMessage: String?
     @Published private(set) var diagnosticsFiles: [DiagnosticsFile] = []
+    @Published private(set) var availableBrowsers: [ActionsService.BrowserOption] = []
 
     private let logger = Logger(subsystem: "com.localports.app", category: "AppSettingsStore")
     private let configStore = AppConfigStore.shared
@@ -56,6 +69,8 @@ final class AppSettingsStore: ObservableObject {
         )
 
         launchInBackground = config.appSettings.launchInBackground
+        showProcessDetails = config.appSettings.showProcessDetails
+        selectedBrowserBundleID = Self.trimmedOrNil(config.appSettings.preferredBrowserBundleID)
         hasCompletedOnboarding = config.hasCompletedOnboarding
 
         if #available(macOS 13.0, *) {
@@ -64,6 +79,7 @@ final class AppSettingsStore: ObservableObject {
             startOnLoginEnabled = false
         }
 
+        refreshAvailableBrowsers()
         refreshDiagnostics()
     }
 
@@ -197,6 +213,20 @@ final class AppSettingsStore: ObservableObject {
         }
     }
 
+    func refreshAvailableBrowsers() {
+        let discovered = ActionsService.shared.availableBrowsers()
+
+        isSyncingFromConfig = true
+        availableBrowsers = discovered
+
+        if let selected = selectedBrowserBundleID,
+           !selected.isEmpty,
+           !discovered.contains(where: { $0.bundleIdentifier == selected }) {
+            selectedBrowserBundleID = nil
+        }
+        isSyncingFromConfig = false
+    }
+
     func openDiagnosticsFolder() {
         let logsURL = diagnosticsDirectoryURL()
 
@@ -231,9 +261,12 @@ final class AppSettingsStore: ObservableObject {
     private func syncFromConfig(_ config: AppConfig) {
         isSyncingFromConfig = true
         launchInBackground = config.appSettings.launchInBackground
+        showProcessDetails = config.appSettings.showProcessDetails
+        selectedBrowserBundleID = Self.trimmedOrNil(config.appSettings.preferredBrowserBundleID)
         isSyncingFromConfig = false
 
         hasCompletedOnboarding = config.hasCompletedOnboarding
+        refreshAvailableBrowsers()
     }
 
     private func persistLaunchPreference() {
@@ -246,9 +279,35 @@ final class AppSettingsStore: ObservableObject {
         }
     }
 
+    private func persistProcessDetailsPreference() {
+        do {
+            _ = try configStore.update { config in
+                config.appSettings.showProcessDetails = showProcessDetails
+            }
+        } catch {
+            logger.error("Failed to persist process details preference: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func persistPreferredBrowser() {
+        do {
+            _ = try configStore.update { config in
+                config.appSettings.preferredBrowserBundleID = Self.trimmedOrNil(selectedBrowserBundleID)
+            }
+        } catch {
+            logger.error("Failed to persist preferred browser: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     private func diagnosticsDirectoryURL() -> URL {
         fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/LocalPorts", isDirectory: true)
+    }
+
+    private static func trimmedOrNil(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -261,6 +320,7 @@ final class StatusBarController: NSObject {
     private let eventMonitor: EventMonitor
     private lazy var contextMenu: NSMenu = makeContextMenu()
     private var settingsWindowController: NSWindowController?
+    private var openSettingsObserver: NSObjectProtocol?
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -271,6 +331,7 @@ final class StatusBarController: NSObject {
 
         configureStatusItem()
         configurePopover()
+        configureOpenSettingsObserver()
 
         eventMonitor.handler = { [weak self] event in
             guard let self, self.popover.isShown else { return }
@@ -291,6 +352,12 @@ final class StatusBarController: NSObject {
             }
 
             self.closePopover(nil)
+        }
+    }
+
+    deinit {
+        if let openSettingsObserver {
+            NotificationCenter.default.removeObserver(openSettingsObserver)
         }
     }
 
@@ -315,6 +382,20 @@ final class StatusBarController: NSObject {
         popover.animates = true
         popover.contentSize = NSSize(width: 468, height: 620)
         popover.contentViewController = NSHostingController(rootView: PortsPopoverView(viewModel: viewModel))
+    }
+
+    private func configureOpenSettingsObserver() {
+        openSettingsObserver = NotificationCenter.default.addObserver(
+            forName: .localPortsOpenSettingsRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.closePopover(nil)
+                self.openSettings(nil)
+            }
+        }
     }
 
     @objc
@@ -446,8 +527,7 @@ struct SettingsPanelView: View {
 
     private var appVersion: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
-        return "\(version) (\(build))"
+        return "v\(version)"
     }
 
     private var configFilePath: String {
@@ -491,6 +571,40 @@ struct SettingsPanelView: View {
                             .font(.caption)
                             .foregroundStyle(.red)
                     }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Browser & Display") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(
+                        "Show process details in service cards",
+                        isOn: $settings.showProcessDetails
+                    )
+
+                    Text("Adds process name, pid, and user in the running state line.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Picker(
+                        "Open button browser",
+                        selection: Binding(
+                            get: { settings.selectedBrowserBundleID ?? "" },
+                            set: { settings.selectedBrowserBundleID = $0.isEmpty ? nil : $0 }
+                        )
+                    ) {
+                        Text("System Default").tag("")
+                        ForEach(settings.availableBrowsers) { browser in
+                            Text(browser.name).tag(browser.bundleIdentifier)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Button("Refresh browser list") {
+                        settings.refreshAvailableBrowsers()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
