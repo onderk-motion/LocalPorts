@@ -24,8 +24,9 @@ jobs:
             -configuration Release \
             -derivedDataPath .build \
             -destination "generic/platform=macOS" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGN_IDENTITY="-" \
             build
 
       - name: Verify Universal Binary
@@ -36,11 +37,19 @@ jobs:
           echo "$INFO" | grep -q "arm64" || (echo "Missing arm64 slice" && exit 1)
           echo "$INFO" | grep -q "x86_64" || (echo "Missing x86_64 slice" && exit 1)
 
+      - name: Verify App Signature
+        run: |
+          APP_PATH=".build/Build/Products/Release/LocalPorts.app"
+          codesign -dv --verbose=4 "$APP_PATH"
+
       - name: Package App
         run: |
           APP_PATH=".build/Build/Products/Release/LocalPorts.app"
           ZIP_NAME="LocalPorts-${GITHUB_REF_NAME}.zip"
+          INSTALLER_NAME="LocalPorts-Install.command"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_NAME"
+          cp scripts/release/LocalPorts-Install.command "$INSTALLER_NAME"
+          chmod +x "$INSTALLER_NAME"
           shasum -a 256 "$ZIP_NAME" > "${ZIP_NAME}.sha256"
 
       - name: Publish GitHub Release Assets
@@ -50,3 +59,4 @@ jobs:
           files: |
             LocalPorts-*.zip
             LocalPorts-*.zip.sha256
+            LocalPorts-Install.command

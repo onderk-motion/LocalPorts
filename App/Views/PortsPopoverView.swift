@@ -31,10 +31,6 @@ struct PortsPopoverView: View {
                     statusBanner(message)
                 }
 
-                if viewModel.requiresImportedStartApproval {
-                    importTrustBanner
-                }
-
                 if !viewModel.hasCompletedOnboarding {
                     onboardingCard
                 }
@@ -265,7 +261,6 @@ struct PortsPopoverView: View {
 
     private func serviceCard(_ service: PortsViewModel.ServiceSnapshot) -> some View {
         let isRunning = viewModel.isRunning(service.id)
-        let isStartLockedByImport = viewModel.isStartBlockedByImportApproval(service.id)
         let canDirectStartOrStop = isRunning || service.canStart
 
         return VStack(alignment: .leading, spacing: 6) {
@@ -318,14 +313,10 @@ struct PortsPopoverView: View {
                         systemName: isRunning ? "stop.fill" : "play.fill",
                         tint: isRunning
                             ? .green.opacity(0.90)
-                            : (isStartLockedByImport
-                                ? .yellow.opacity(0.90)
-                                : (canDirectStartOrStop ? .blue.opacity(0.90) : .orange.opacity(0.78)))
+                            : (canDirectStartOrStop ? .blue.opacity(0.90) : .orange.opacity(0.78))
                     ) {
                         if isRunning {
                             viewModel.stopService(service.id, force: false)
-                        } else if isStartLockedByImport {
-                            viewModel.showImportApprovalRequiredMessage()
                         } else if service.canStart {
                             viewModel.startService(service.id)
                         } else {
@@ -334,7 +325,7 @@ struct PortsPopoverView: View {
                     }
                     .help(isRunning
                         ? "Stop"
-                        : (isStartLockedByImport ? "Trust imported config first" : (service.canStart ? "Start" : "Configure start")))
+                        : (service.canStart ? "Start" : "Configure start"))
 
                     Menu {
                         Button("Rename") {
@@ -351,7 +342,6 @@ struct PortsPopoverView: View {
                             Button("Restart") {
                                 viewModel.restartService(service.id)
                             }
-                            .disabled(isStartLockedByImport)
                         }
 
                         if service.workingDirectory != nil {
@@ -468,38 +458,6 @@ struct PortsPopoverView: View {
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.white.opacity(0.10))
-        )
-    }
-
-    private var importTrustBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "shield.lefthalf.filled")
-                .font(.caption)
-                .foregroundStyle(.yellow.opacity(0.92))
-
-            Text("Imported config is in review mode. Start actions are locked until you trust it.")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.88))
-                .fixedSize(horizontal: false, vertical: true)
-
-            Spacer(minLength: 8)
-
-            Button("Trust Config") {
-                viewModel.approveImportedStartCommands()
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.yellow.opacity(0.25))
-            .controlSize(.small)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.yellow.opacity(0.12))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.yellow.opacity(0.22), lineWidth: 1)
         )
     }
 

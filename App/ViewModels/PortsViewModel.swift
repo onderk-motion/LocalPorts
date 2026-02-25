@@ -312,10 +312,6 @@ final class PortsViewModel: ObservableObject {
             statusMessage = "Start is not configured for \(config.name)"
             return
         }
-        if isStartBlockedByImportApproval(id) {
-            showImportApprovalRequiredMessage()
-            return
-        }
 
         if isRunning(id) {
             statusMessage = "\(config.name) is already running"
@@ -374,10 +370,6 @@ final class PortsViewModel: ObservableObject {
         guard let config = serviceConfiguration(for: id) else { return }
         guard controllers[id] != nil else {
             statusMessage = "Restart is not configured for \(config.name)"
-            return
-        }
-        if isStartBlockedByImportApproval(id) {
-            showImportApprovalRequiredMessage()
             return
         }
 
@@ -707,29 +699,15 @@ final class PortsViewModel: ObservableObject {
     }
 
     func isStartBlockedByImportApproval(_ serviceID: String) -> Bool {
-        guard requiresImportedStartApproval else { return false }
-        return serviceConfiguration(for: serviceID)?.canStart ?? false
+        false
     }
 
     func showImportApprovalRequiredMessage() {
-        statusMessage = "Imported start commands are locked. Click Trust Config to enable Start."
+        // Import trust flow was removed in v1.0.4.
     }
 
     func approveImportedStartCommands() {
-        guard requiresImportedStartApproval else { return }
-
-        do {
-            let updated = try configStore.update { config in
-                config.appSettings.requiresImportedStartApproval = false
-            }
-            requiresImportedStartApproval = updated.appSettings.requiresImportedStartApproval
-            didAttemptLaunchAutoStart = false
-            statusMessage = "Trusted imported config. Start actions are enabled."
-            refreshNow()
-        } catch {
-            logger.error("Failed to trust imported start commands: \(error.localizedDescription, privacy: .public)")
-            statusMessage = "Failed to update trust setting"
-        }
+        requiresImportedStartApproval = false
     }
 
     func validateStartConfiguration(workingDirectory: String, startCommand: String) throws -> String {
@@ -1012,7 +990,7 @@ final class PortsViewModel: ObservableObject {
         activeProfileID = profile?.id ?? "default"
         activeProfileName = profile?.name ?? "Default"
         hasCompletedOnboarding = config.hasCompletedOnboarding
-        requiresImportedStartApproval = config.appSettings.requiresImportedStartApproval
+        requiresImportedStartApproval = false
         showProcessDetails = config.appSettings.showProcessDetails
         let sharedBrowser = config.appSettings.preferredBrowserBundleID?.trimmingCharacters(in: .whitespacesAndNewlines)
         preferredBrowserBundleID = (sharedBrowser?.isEmpty == true) ? nil : sharedBrowser
@@ -1374,10 +1352,6 @@ final class PortsViewModel: ObservableObject {
 
     private func tryLaunchAutoStartIfNeeded() {
         guard !didAttemptLaunchAutoStart else { return }
-        guard !requiresImportedStartApproval else {
-            logger.info("Launch auto-start paused: imported config requires trust approval")
-            return
-        }
         didAttemptLaunchAutoStart = true
 
         let serviceIDsToStart = serviceConfigurations.compactMap { config -> String? in
@@ -1784,7 +1758,10 @@ final class AppConfigStore {
         }
 
         if let loaded = loadFromDisk() {
-            let sanitized = AppConfig.sanitizeImported(loaded, defaultBuiltInServices: defaultBuiltInServices)
+            var sanitized = AppConfig.sanitizeImported(loaded, defaultBuiltInServices: defaultBuiltInServices)
+            if sanitized.appSettings.requiresImportedStartApproval {
+                sanitized.appSettings.requiresImportedStartApproval = false
+            }
             if sanitized != loaded {
                 do {
                     try saveToDisk(sanitized)
@@ -1879,8 +1856,7 @@ final class AppConfigStore {
         let data = try Data(contentsOf: sourceURL)
         let decoded = try JSONDecoder().decode(AppConfig.self, from: data)
         var sanitized = AppConfig.sanitizeImported(decoded, defaultBuiltInServices: defaultBuiltInServices)
-        sanitized.appSettings.requiresImportedStartApproval = sanitized.profiles
-            .contains(where: { profile in profile.serviceConfigurations.contains(where: \.canStart) })
+        sanitized.appSettings.requiresImportedStartApproval = false
 
         try saveToDisk(sanitized)
         cachedConfig = sanitized

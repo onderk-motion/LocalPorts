@@ -128,11 +128,7 @@ final class AppSettingsStore: ObservableObject {
                 defaultBuiltInServices: PortsViewModel.defaultBuiltInServices
             )
             syncFromConfig(imported)
-            if imported.appSettings.requiresImportedStartApproval {
-                configActionMessage = "Configuration imported from \(sourceURL.lastPathComponent). Review required: click Trust Config in the services panel before Start."
-            } else {
-                configActionMessage = "Configuration imported from \(sourceURL.lastPathComponent)."
-            }
+            configActionMessage = "Configuration imported from \(sourceURL.lastPathComponent). Start commands are trusted automatically."
         } catch {
             logger.error("Failed to import config: \(error.localizedDescription, privacy: .public)")
             configActionMessage = "Could not import configuration: \(error.localizedDescription)"
@@ -151,18 +147,34 @@ final class AppSettingsStore: ObservableObject {
             return
         }
 
+        guard !enabled || isInstalledInApplications() else {
+            startOnLoginEnabled = currentStartOnLoginStatus()
+            startOnLoginErrorMessage = "Move LocalPorts to /Applications first, then try again. If needed, run LocalPorts-Install.command from the release."
+            return
+        }
+
         do {
             if enabled {
                 try SMAppService.mainApp.register()
             } else {
                 try SMAppService.mainApp.unregister()
             }
-            startOnLoginEnabled = (SMAppService.mainApp.status == .enabled)
+            startOnLoginEnabled = currentStartOnLoginStatus()
             startOnLoginErrorMessage = nil
         } catch {
-            startOnLoginEnabled = (SMAppService.mainApp.status == .enabled)
-            startOnLoginErrorMessage = "Could not update login item: \(error.localizedDescription)"
+            startOnLoginEnabled = currentStartOnLoginStatus()
+            startOnLoginErrorMessage = "Could not update Start on Login. Make sure LocalPorts is in /Applications, then open Login Items Settings and try again."
+            logger.error("Failed to update start on login: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    func openLoginItemsSettings() {
+        guard #available(macOS 13.0, *) else {
+            startOnLoginErrorMessage = "Login Items settings require macOS 13 or newer."
+            return
+        }
+
+        SMAppService.openSystemSettingsLoginItems()
     }
 
     func showOnboardingAgain() {
@@ -266,7 +278,23 @@ final class AppSettingsStore: ObservableObject {
         isSyncingFromConfig = false
 
         hasCompletedOnboarding = config.hasCompletedOnboarding
+        startOnLoginEnabled = currentStartOnLoginStatus()
         refreshAvailableBrowsers()
+    }
+
+    private func currentStartOnLoginStatus() -> Bool {
+        guard #available(macOS 13.0, *) else {
+            return false
+        }
+        return SMAppService.mainApp.status == .enabled
+    }
+
+    private func isInstalledInApplications() -> Bool {
+        let bundleURL = Bundle.main.bundleURL.standardizedFileURL.resolvingSymlinksInPath()
+        let expectedURL = URL(fileURLWithPath: "/Applications/LocalPorts.app", isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        return bundleURL.path == expectedURL.path
     }
 
     private func persistLaunchPreference() {
@@ -565,6 +593,12 @@ struct SettingsPanelView: View {
                     Text("When enabled, LocalPorts stays in the menu bar only. When disabled, the services panel opens on startup.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Button("Open Login Items Settings") {
+                        settings.openLoginItemsSettings()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
 
                     if let errorMessage = settings.startOnLoginErrorMessage {
                         Text(errorMessage)

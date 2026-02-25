@@ -8,13 +8,13 @@ Most people should install LocalPorts from GitHub Releases. Developer build deta
 
 ## End User Guide (Releases)
 
-### What's New in v1.0.3
-- easier access to settings: new `Settings` (gear) button next to `Refresh` in the popover footer
-- optional process details on cards (`process` + `user`) from `Settings > Browser & Display`
-- browser control improvements:
-  - choose a global browser for the `Open` button
-  - optionally set a different browser per service in Add/Edit
-- cleaner service status text for better readability, with full details available on hover tooltip
+### What's New in v1.0.4
+- easier installation for first-time users with `LocalPorts-Install.command` (double-click installer flow)
+- imported configs are now trusted automatically after sanitization (no separate `Trust Config` step)
+- improved `Start LocalPorts app on login` behavior:
+  - clearer error guidance when app is not under `/Applications`
+  - quick button to open macOS Login Items settings
+- release pipeline now ships ad-hoc signed app builds plus installer script asset
 
 ### What It Does
 - shows your saved local services and their status (`Running`, `Stopped`, `Starting`, `Stopping`, `Error`)
@@ -24,19 +24,34 @@ Most people should install LocalPorts from GitHub Releases. Developer build deta
 
 ### Download and Install
 1. Open the latest release: `https://github.com/onderk-motion/LocalPorts/releases/latest`
-2. Download `LocalPorts-vX.Y.Z.zip` from the **Assets** section.
+2. Download both `LocalPorts-vX.Y.Z.zip` and `LocalPorts-Install.command` from the **Assets** section.
 3. Unzip the file.
-4. Drag `LocalPorts.app` into `/Applications`.
-5. Launch:
+4. Make sure `LocalPorts-Install.command` is in the same folder as `LocalPorts.app`.
+5. Double-click `LocalPorts-Install.command` and follow prompts.
+6. The installer copies the app to `/Applications`, clears quarantine metadata, and opens LocalPorts.
 
-```bash
-open /Applications/LocalPorts.app
-```
+### What Is `LocalPorts-Install.command`?
+- it is a one-click installer script for non-technical users
+- it closes any running LocalPorts process before install
+- it copies `LocalPorts.app` into `/Applications`
+- it removes quarantine metadata (when present) to reduce first-launch friction
+- it opens LocalPorts after install
+- if admin permission is needed, macOS asks for your password
 
-If macOS blocks first launch, Control-click `LocalPorts.app` in Finder, choose `Open`, then confirm.
+If the script does not open on first try:
+1. Right-click `LocalPorts-Install.command` and choose `Open`.
+2. Click `Open` again in the confirmation popup.
+3. If blocked by policy, go to `System Settings > Privacy & Security` and use `Open Anyway` for that file.
+
+Manual fallback:
+1. Drag `LocalPorts.app` into `/Applications`.
+2. Try launching once with `open /Applications/LocalPorts.app`.
+3. If macOS blocks the app, Control-click `LocalPorts.app` in Finder, choose `Open`, then confirm.
+4. If it is still blocked, open `System Settings > Privacy & Security` and use `Open Anyway` for LocalPorts, then confirm with your password.
 
 ### Which Release File Should I Download?
 - `LocalPorts-vX.Y.Z.zip`: the app package you should install
+- `LocalPorts-Install.command`: recommended installer for non-technical users
 - `LocalPorts-vX.Y.Z.zip.sha256`: optional integrity checksum
 - `Source code (zip/tar.gz)`: source snapshot only, not a runnable app
 
@@ -89,7 +104,7 @@ Likely causes: invalid folder path, missing runtime (`npm`, `pnpm`, etc.), or co
 - command presets (`npm run dev`, `pnpm dev`, `yarn dev`, `node server.js`)
 - startup options: `Start LocalPorts app on login`, `Launch in the background`
 - config export/import with safety checks
-- imported commands require explicit trust before start
+- imported configs are trusted automatically after sanitization
 - start failure diagnostics with secret redaction
 
 ## Requirements
@@ -120,7 +135,7 @@ cd "<repo-root>"
 xcodebuild -project LocalPorts.xcodeproj -scheme LocalPorts -configuration Debug build
 ```
 
-### Release Build (Unsigned)
+### Release Build (Ad-hoc Signed)
 
 ```bash
 cd "<repo-root>"
@@ -128,8 +143,9 @@ xcodebuild -project LocalPorts.xcodeproj \
   -scheme LocalPorts \
   -configuration Release \
   -destination "generic/platform=macOS" \
-  CODE_SIGNING_ALLOWED=NO \
-  CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGNING_ALLOWED=YES \
+  CODE_SIGNING_REQUIRED=YES \
+  CODE_SIGN_IDENTITY="-" \
   build
 ```
 
@@ -142,7 +158,7 @@ xcodebuild -project LocalPorts.xcodeproj \
 ```
 
 - release workflow: `.github/workflows/release.yml`
-- release assets are created on tag push (`v*`) as `LocalPorts-vX.Y.Z.zip` and `LocalPorts-vX.Y.Z.zip.sha256`
+- release assets are created on tag push (`v*`) as `LocalPorts-vX.Y.Z.zip`, `LocalPorts-vX.Y.Z.zip.sha256`, and `LocalPorts-Install.command`
 
 ## Project Structure
 
@@ -166,9 +182,10 @@ README.md
 ## Security and Distribution Notes
 
 - imported config files are sanitized before save
-- imported start commands are locked until user trust confirmation
+- imported configs are trusted automatically after sanitization
 - logs redact common token/secret patterns
-- for public distribution without warnings: sign with Developer ID and notarize via Apple
+- current releases are ad-hoc signed (not notarized); some Macs may still require first-launch approval
+- for fully warning-free distribution, sign with Developer ID and notarize via Apple
 
 ## Open Source Collaboration
 
