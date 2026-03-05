@@ -99,9 +99,19 @@ struct PortsPopoverView: View {
             }
 
             VStack(alignment: .leading, spacing: 1) {
-                Text("LocalPorts")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("LocalPorts")
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                    #if DEBUG
+                    Text("DEV")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.black.opacity(0.7))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.yellow, in: RoundedRectangle(cornerRadius: 4))
+                    #endif
+                }
             }
 
             Spacer()
@@ -358,13 +368,11 @@ struct PortsPopoverView: View {
                             viewModel.stopService(service.id, force: true)
                         }
 
-                        if !service.isBuiltIn {
-                            Divider()
-                            Button("Remove Card", role: .destructive) {
-                                viewModel.removeService(service.id)
-                                if editingServiceID == service.id {
-                                    cancelRename()
-                                }
+                        Divider()
+                        Button("Remove Card", role: .destructive) {
+                            viewModel.removeService(service.id)
+                            if editingServiceID == service.id {
+                                cancelRename()
                             }
                         }
                     } label: {
@@ -543,6 +551,7 @@ private struct AddServiceSheet: View {
     @State private var errorMessage: String?
     @State private var validationMessage: String?
     @State private var validationIsError = false
+    @State private var portConflictName: String?
 
     private let presets: [CommandPreset] = [
         CommandPreset(id: "npm-dev", title: "npm dev", command: "npm run dev"),
@@ -561,7 +570,20 @@ private struct AddServiceSheet: View {
                 .font(.title3.weight(.semibold))
 
             field("Name", text: $name, placeholder: "My API")
-            field("Address", text: $address, placeholder: "http://localhost:3000")
+
+            VStack(alignment: .leading, spacing: 5) {
+                field("Address", text: $address, placeholder: "http://localhost:3000")
+                if let conflict = portConflictName {
+                    Label("Port already used by \(conflict)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+            .onChange(of: address) { newValue in
+                let port = URL(string: newValue)?.port
+                portConflictName = port.flatMap { viewModel.conflictingServiceName(forPort: $0) }
+            }
+
             field("Health Check URL (Optional)", text: $healthCheckURL, placeholder: "http://localhost:3000/health")
             projectFolderField
             field("Start Command (Optional)", text: $startCommand, placeholder: "npm run dev")
@@ -774,6 +796,7 @@ private struct EditServiceSheet: View {
     @State private var errorMessage: String?
     @State private var validationMessage: String?
     @State private var validationIsError = false
+    @State private var portConflictName: String?
 
     private let presets: [CommandPreset] = [
         CommandPreset(id: "npm-dev", title: "npm dev", command: "npm run dev"),
@@ -806,7 +829,21 @@ private struct EditServiceSheet: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            field("Address", text: $address, placeholder: "http://localhost:3000")
+            VStack(alignment: .leading, spacing: 5) {
+                field("Address", text: $address, placeholder: "http://localhost:3000")
+                if let conflict = portConflictName {
+                    Label("Port already used by \(conflict)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+            .onChange(of: address) { newValue in
+                let port = URL(string: newValue)?.port
+                portConflictName = port.flatMap {
+                    viewModel.conflictingServiceName(forPort: $0, excludingID: serviceData.id)
+                }
+            }
+
             field("Health Check URL (Optional)", text: $healthCheckURL, placeholder: "http://localhost:3000/health")
             projectFolderField
             field("Start Command (Optional)", text: $startCommand, placeholder: "npm run dev")

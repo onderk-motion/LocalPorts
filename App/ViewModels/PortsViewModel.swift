@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import UserNotifications
 
 @MainActor
 final class PortsViewModel: ObservableObject {
@@ -42,7 +43,10 @@ final class PortsViewModel: ObservableObject {
 
     @Published private(set) var ports: [ListeningPort] = []
     @Published private(set) var serviceStates: [String: ManagedServiceState] = [:]
-    @Published private(set) var statusMessage: String?
+    @Published private(set) var statusMessage: String? {
+        didSet { scheduleAutoDismissIfNeeded() }
+    }
+    private var autoDismissTask: Task<Void, Never>?
     @Published private var customServiceNames: [String: String] = [:]
     @Published private(set) var profileSummaries: [ProfileSummary] = []
     @Published private(set) var activeProfileID: String = ""
@@ -88,6 +92,7 @@ final class PortsViewModel: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var didAttemptLaunchAutoStart = false
     private var startVerificationTasks: [String: Task<Void, Never>] = [:]
+    private var userInitiatedStopIDs: Set<String> = []
     private var healthCheckTasks: [String: Task<Void, Never>] = [:]
     private var lastHealthCheckAt: [String: Date] = [:]
     private let healthCheckInterval: TimeInterval = 5.0
@@ -232,7 +237,42 @@ final class PortsViewModel: ObservableObject {
     }
 
     func dismissStatusMessage() {
+        autoDismissTask?.cancel()
         statusMessage = nil
+    }
+
+    /// Returns the name of the existing service using `port`, or nil if free.
+    func conflictingServiceName(forPort port: Int, excludingID: String? = nil) -> String? {
+        serviceConfigurations.first(where: { $0.port == port && $0.id != excludingID })?.name
+    }
+
+    private func sendUnexpectedStopNotification(for name: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "\(name) stopped unexpectedly"
+        content.body = "Open LocalPorts to restart it."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "crash-\(name)-\(Date().timeIntervalSince1970)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    private func scheduleAutoDismissIfNeeded() {
+        autoDismissTask?.cancel()
+        autoDismissTask = nil
+        guard let message = statusMessage else { return }
+        let isPersistent = message.hasPrefix("Starting ")
+            || message.hasPrefix("Restarting ")
+            || message.localizedCaseInsensitiveContains("failed")
+            || message.localizedCaseInsensitiveContains("timed out")
+        guard !isPersistent else { return }
+        autoDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            self?.statusMessage = nil
+        }
     }
 
     func completeOnboarding() {
@@ -338,6 +378,7 @@ final class PortsViewModel: ObservableObject {
 
     func stopService(_ id: String, force: Bool = false) {
         guard let config = serviceConfiguration(for: id) else { return }
+        userInitiatedStopIDs.insert(id)
         startVerificationTasks[id]?.cancel()
         startVerificationTasks.removeValue(forKey: id)
         guard let pid = pid(forServiceID: id) else {
@@ -670,8 +711,6 @@ final class PortsViewModel: ObservableObject {
     func removeService(_ id: String) {
         guard let index = serviceConfigurations.firstIndex(where: { $0.id == id }) else { return }
         let config = serviceConfigurations[index]
-        guard !config.isBuiltIn else { return }
-
         startVerificationTasks[id]?.cancel()
         startVerificationTasks.removeValue(forKey: id)
         serviceConfigurations.remove(at: index)
@@ -971,12 +1010,6 @@ final class PortsViewModel: ObservableObject {
             seenIDs.insert(service.id)
             seenPorts.insert(service.port)
             ordered.append(service)
-        }
-
-        for builtIn in Self.defaultBuiltInServices where !seenIDs.contains(builtIn.id) && !seenPorts.contains(builtIn.port) {
-            seenIDs.insert(builtIn.id)
-            seenPorts.insert(builtIn.port)
-            ordered.append(builtIn)
         }
 
         return ordered
@@ -1308,13 +1341,20 @@ final class PortsViewModel: ObservableObject {
                 continue
             }
 
-            switch serviceStates[config.id] {
+            let previousState = serviceStates[config.id]
+            switch previousState {
             case .failed:
                 break
             case .starting where startVerificationTasks[config.id] != nil:
                 break
             default:
                 serviceStates[config.id] = .stopped
+                if case .running = previousState {
+                    let wasIntentional = userInitiatedStopIDs.remove(config.id) != nil
+                    if !wasIntentional {
+                        sendUnexpectedStopNotification(for: config.name)
+                    }
+                }
             }
         }
 

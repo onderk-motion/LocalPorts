@@ -363,6 +363,7 @@ final class StatusBarController: NSObject {
 
         eventMonitor.handler = { [weak self] event in
             guard let self, self.popover.isShown else { return }
+            guard NSApp.modalWindow == nil else { return }
 
             if let eventWindow = event?.window {
                 if let popoverWindow = self.popover.contentViewController?.view.window {

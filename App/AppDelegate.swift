@@ -1,5 +1,6 @@
 import AppKit
 import OSLog
+import UserNotifications
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -11,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         statusBarController = StatusBarController()
         logger.info("Application launched and status bar initialized")
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         if !settings.launchInBackground || !settings.hasCompletedOnboarding {
             Task { @MainActor [weak self] in
