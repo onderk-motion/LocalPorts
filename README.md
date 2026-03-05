@@ -8,6 +8,13 @@ Most people should install LocalPorts from GitHub Releases. Developer build deta
 
 ## End User Guide (Releases)
 
+### What's New in v1.0.5
+- built-in cards (Local Frontend, Local API, Local Service) can now be deleted; deleted cards won't return on relaunch
+- `Browse…` in Add/Edit sheet no longer closes the popover
+- status messages auto-dismiss after 3 seconds; errors and progress messages stay
+- inline port conflict warning in Add/Edit sheets — shown as you type, before saving
+- system notification when a managed service stops unexpectedly
+
 ### What's New in v1.0.4
 - easier installation for first-time users with `LocalPorts-Install.command` (double-click installer flow)
 - imported configs are now trusted automatically after sanitization (no separate `Trust Config` step)
@@ -102,6 +109,8 @@ Likely causes: invalid folder path, missing runtime (`npm`, `pnpm`, etc.), or co
   - global browser for `Open`
   - per-service browser override in Add/Edit
 - command presets (`npm run dev`, `pnpm dev`, `yarn dev`, `node server.js`)
+- inline port conflict detection in Add/Edit sheets
+- system notifications when a managed service stops unexpectedly
 - startup options: `Start LocalPorts app on login`, `Launch in the background`
 - config export/import with safety checks
 - imported configs are trusted automatically after sanitization
