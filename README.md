@@ -2,7 +2,7 @@
 
 LocalPorts is a macOS menu bar app that helps you manage local development services from one place.
 
-![LocalPorts interface](docs/images/localports-ui.png)
+![LocalPorts interface](docs/images/localports-ui.jpeg)
 
 ## Download
 
@@ -44,6 +44,8 @@ Requires macOS 13.0+.
 | Export / Import profiles | — | ✓ |
 
 **[Upgrade to Pro — $19 lifetime](https://onderk.lemonsqueezy.com/checkout/buy/3f384d3a-2bfb-4b4c-b5e8-c81bdbb21bd8)**
+
+<img src="docs/images/localports-pro.png" width="320" alt="LocalPorts Pro upgrade">  <img src="docs/images/localports-appearance.png" width="540" alt="Appearance settings">
 
 ## Quick Start
 
