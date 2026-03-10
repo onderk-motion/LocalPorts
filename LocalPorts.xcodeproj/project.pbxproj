@@ -15,9 +15,15 @@
 		B00100000000000000000006 /* ActionsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10700000000000000000001 /* ActionsService.swift */; };
 		B00100000000000000000007 /* PortsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10800000000000000000001 /* PortsViewModel.swift */; };
 		B00100000000000000000008 /* PortsPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10900000000000000000001 /* PortsPopoverView.swift */; };
+		B00100000000000000000020 /* AddEditServicePanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10900000000000000000002 /* AddEditServicePanelView.swift */; };
+		B00100000000000000000021 /* ServiceLogPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10900000000000000000003 /* ServiceLogPanelView.swift */; };
 		B00100000000000000000009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F10A00000000000000000001 /* Assets.xcassets */; };
 		B00100000000000000000010 /* ManagedServiceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10C00000000000000000001 /* ManagedServiceController.swift */; };
 		B00100000000000000000011 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = F10D00000000000000000001 /* AppIcon.icns */; };
+		B00100000000000000000012 /* LicenseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10E00000000000000000001 /* LicenseManager.swift */; };
+		B00100000000000000000013 /* ProFeatureGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10F00000000000000000001 /* ProFeatureGate.swift */; };
+		B00100000000000000000014 /* ProUpgradeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11000000000000000000001 /* ProUpgradeSheet.swift */; };
+		B00100000000000000000015 /* LicenseActivationSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11100000000000000000001 /* LicenseActivationSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,10 +36,16 @@
 		F10700000000000000000001 /* ActionsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionsService.swift; sourceTree = "<group>"; };
 		F10800000000000000000001 /* PortsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortsViewModel.swift; sourceTree = "<group>"; };
 		F10900000000000000000001 /* PortsPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortsPopoverView.swift; sourceTree = "<group>"; };
+		F10900000000000000000002 /* AddEditServicePanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEditServicePanelView.swift; sourceTree = "<group>"; };
+		F10900000000000000000003 /* ServiceLogPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceLogPanelView.swift; sourceTree = "<group>"; };
 		F10A00000000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F10B00000000000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F10C00000000000000000001 /* ManagedServiceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedServiceController.swift; sourceTree = "<group>"; };
 		F10D00000000000000000001 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		F10E00000000000000000001 /* LicenseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LicenseManager.swift; sourceTree = "<group>"; };
+		F10F00000000000000000001 /* ProFeatureGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProFeatureGate.swift; sourceTree = "<group>"; };
+		F11000000000000000000001 /* ProUpgradeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProUpgradeSheet.swift; sourceTree = "<group>"; };
+		F11100000000000000000001 /* LicenseActivationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LicenseActivationSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -65,6 +77,7 @@
 				G00400000000000000000001 /* Services */,
 				G00500000000000000000001 /* ViewModels */,
 				G00600000000000000000001 /* Views */,
+				G00800000000000000000001 /* Premium */,
 				F10A00000000000000000001 /* Assets.xcassets */,
 				F10D00000000000000000001 /* AppIcon.icns */,
 				F10B00000000000000000001 /* Info.plist */,
@@ -102,6 +115,27 @@
 			isa = PBXGroup;
 			children = (
 				F10900000000000000000001 /* PortsPopoverView.swift */,
+				F10900000000000000000002 /* AddEditServicePanelView.swift */,
+				F10900000000000000000003 /* ServiceLogPanelView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		G00800000000000000000001 /* Premium */ = {
+			isa = PBXGroup;
+			children = (
+				F10E00000000000000000001 /* LicenseManager.swift */,
+				F10F00000000000000000001 /* ProFeatureGate.swift */,
+				G00900000000000000000001 /* Views */,
+			);
+			path = Premium;
+			sourceTree = "<group>";
+		};
+		G00900000000000000000001 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				F11000000000000000000001 /* ProUpgradeSheet.swift */,
+				F11100000000000000000001 /* LicenseActivationSheet.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -192,7 +226,13 @@
 				B00100000000000000000006 /* ActionsService.swift in Sources */,
 				B00100000000000000000007 /* PortsViewModel.swift in Sources */,
 				B00100000000000000000008 /* PortsPopoverView.swift in Sources */,
+				B00100000000000000000020 /* AddEditServicePanelView.swift in Sources */,
+				B00100000000000000000021 /* ServiceLogPanelView.swift in Sources */,
 				B00100000000000000000010 /* ManagedServiceController.swift in Sources */,
+				B00100000000000000000012 /* LicenseManager.swift in Sources */,
+				B00100000000000000000013 /* ProFeatureGate.swift in Sources */,
+				B00100000000000000000014 /* ProUpgradeSheet.swift in Sources */,
+				B00100000000000000000015 /* LicenseActivationSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -207,6 +247,7 @@
 				CLANG_ENABLE_OBJC_ARC = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -247,7 +288,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
@@ -269,7 +310,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;

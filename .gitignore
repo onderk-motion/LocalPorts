@@ -19,3 +19,7 @@ xcuserdata/
 
 # Local icon backups (not required for app build)
 /localports.icns
+
+# Private development files (in LocalPorts-Pro repo)
+HANDOFF.md
+App/Premium/

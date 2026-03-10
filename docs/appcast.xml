@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>LocalPorts</title>
+    <link>https://onderk-motion.github.io/LocalPorts/appcast.xml</link>
+    <description>LocalPorts release feed</description>
+    <language>en</language>
+
+    <item>
+      <title>LocalPorts 2.0.0</title>
+      <sparkle:releaseNotesLink>
+        https://github.com/onderk-motion/LocalPorts/releases/tag/v2.0.0
+      </sparkle:releaseNotesLink>
+      <pubDate>Mon, 10 Mar 2026 00:00:00 +0000</pubDate>
+      <enclosure
+        url="https://github.com/onderk-motion/LocalPorts/releases/download/v2.0.0/LocalPorts-2.0.0.dmg"
+        sparkle:version="47"
+        sparkle:shortVersionString="2.0.0"
+        type="application/octet-stream"
+        sparkle:edSignature="x905E4v13IL+boLjtkY6bEy/YrbrEPpknNOGQ4QXnwI5xX53efsPPgyCHsg5qZ8TNX/phV3yl+v4tSjkiAVrBQ=="
+        length="2657096"
+      />
+    </item>
+
+  </channel>
+</rss>

@@ -14,6 +14,10 @@ final class PortsViewModel: ObservableObject {
         let health: ServiceHealthState
         let canStart: Bool
         let isBuiltIn: Bool
+        /// Group label, e.g. "Frontend". nil = uncategorized.
+        let category: String?
+        /// Session uptime dots: true=was running, false=was not. Most recent last.
+        let recentHistory: [Bool]
     }
 
     struct ServiceEditorData: Identifiable {
@@ -25,6 +29,9 @@ final class PortsViewModel: ObservableObject {
         let startCommand: String
         let usesGlobalBrowser: Bool
         let browserBundleID: String?
+        let category: String
+        let notificationsEnabled: Bool
+        let autoRestartEnabled: Bool
     }
 
     struct ProfileSummary: Identifiable {
@@ -43,6 +50,8 @@ final class PortsViewModel: ObservableObject {
 
     @Published private(set) var ports: [ListeningPort] = []
     @Published private(set) var serviceStates: [String: ManagedServiceState] = [:]
+    @Published private(set) var serviceLogs: [String: [String]] = [:]
+    @Published private(set) var activeProfileAutoStart: Bool = true
     @Published private(set) var statusMessage: String? {
         didSet { scheduleAutoDismissIfNeeded() }
     }
@@ -68,7 +77,9 @@ final class PortsViewModel: ObservableObject {
                 state: serviceStates[config.id] ?? .stopped,
                 health: healthStates[config.id] ?? .unavailable,
                 canStart: config.canStart,
-                isBuiltIn: config.isBuiltIn
+                isBuiltIn: config.isBuiltIn,
+                category: config.category,
+                recentHistory: serviceHistory[config.id] ?? []
             )
         }
     }
@@ -102,6 +113,17 @@ final class PortsViewModel: ObservableObject {
 
     private var serviceConfigurations: [ManagedServiceConfiguration] = []
     private var controllers: [String: ManagedServiceController] = [:]
+    private var serviceHistory: [String: [Bool]] = [:]
+    private let maxLogLines = 200
+
+    private static let logTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+    private let maxHistoryLength = 14
+    private var historyFlushCounter = 0
+    private let historyFlushInterval = 15   // write every ~30 s at 2 s polling
 
     enum ServiceValidationError: LocalizedError {
         case nameRequired
@@ -117,6 +139,8 @@ final class PortsViewModel: ObservableObject {
         case invalidStartCommand
         case profileNameRequired
         case profileDeleteLast
+        case profileLimitReached
+        case invalidProfileFile
 
         var errorDescription: String? {
             switch self {
@@ -146,6 +170,10 @@ final class PortsViewModel: ObservableObject {
                 return "Profile name is required."
             case .profileDeleteLast:
                 return "You cannot delete the last profile."
+            case .profileLimitReached:
+                return "Free accounts can have up to \(ProGate.freeProfileLimit) profiles. Upgrade to Pro for unlimited profiles."
+            case .invalidProfileFile:
+                return "The selected file is not a valid LocalPorts profile."
             }
         }
     }
@@ -159,6 +187,7 @@ final class PortsViewModel: ObservableObject {
             legacyCompatibilityUntilVersion: LegacyMigrationService.legacyCompatibilityUntilVersion
         )
         applyActiveProfile(from: config)
+        loadPersistedHistory()
         rebuildControllers()
 
         for config in serviceConfigurations {
@@ -246,7 +275,81 @@ final class PortsViewModel: ObservableObject {
         serviceConfigurations.first(where: { $0.port == port && $0.id != excludingID })?.name
     }
 
-    private func sendUnexpectedStopNotification(for name: String) {
+    /// True when the service is not running but its port is occupied by an external process.
+    func isPortOccupiedExternally(_ id: String) -> Bool {
+        guard let config = serviceConfiguration(for: id) else { return false }
+        guard !isRunning(id) else { return false }
+        return ports.contains(where: { $0.port == config.port })
+    }
+
+    func clearServiceLogs(_ id: String) {
+        serviceLogs[id] = nil
+    }
+
+    private func scheduleAutoRestartIfNeeded(config: ManagedServiceConfiguration) {
+        guard ProGate.isAllowed(.autoRestart) else { return }
+        let autoRestartIDs = configStore.currentConfigSnapshot()?.appSettings.autoRestartEnabledIDs ?? []
+        guard autoRestartIDs.contains(config.id) else { return }
+        guard controllers[config.id] != nil else { return }
+
+        statusMessage = "Auto-restarting \(displayName(for: config.id))…"
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, !Task.isCancelled else { return }
+            self.startService(config.id)
+        }
+    }
+
+    private func sendWebhookIfConfigured(serviceID: String, name: String, serviceURL: String) {
+        guard ProGate.isAllowed(.webhookNotifications) else { return }
+        guard let rawURL = configStore.currentConfigSnapshot()?.appSettings.webhookURL,
+              let url = URL(string: rawURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              !rawURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let isDiscord = rawURL.contains("discord.com/api/webhooks")
+
+        let payload: [String: Any]
+        if isDiscord {
+            payload = [
+                "embeds": [[
+                    "title": "⚠️ Service Stopped",
+                    "description": "**\(name)** stopped unexpectedly.",
+                    "color": 15158332,
+                    "fields": [
+                        ["name": "URL", "value": serviceURL, "inline": true],
+                        ["name": "Time", "value": timestamp, "inline": true]
+                    ]
+                ]]
+            ]
+        } else {
+            payload = [
+                "event": "service_stopped",
+                "service": name,
+                "serviceUrl": serviceURL,
+                "timestamp": timestamp
+            ]
+        }
+
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        request.timeoutInterval = 10
+        URLSession.shared.dataTask(with: request) { [weak self] _, _, error in
+            if let error {
+                self?.logger.error("Webhook delivery failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }.resume()
+    }
+
+    private func sendUnexpectedStopNotification(serviceID: String, name: String) {
+        // Pro feature: per-service notification opt-out
+        let disabled = configStore.currentConfigSnapshot()?.appSettings.disabledCrashNotificationIDs ?? []
+        guard !disabled.contains(serviceID) else { return }
+
         let content = UNMutableNotificationContent()
         content.title = "\(name) stopped unexpectedly"
         content.body = "Open LocalPorts to restart it."
@@ -323,6 +426,9 @@ final class PortsViewModel: ObservableObject {
     func serviceEditorData(for id: String) -> ServiceEditorData? {
         guard let config = serviceConfiguration(for: id) else { return nil }
 
+        let settings = configStore.currentConfigSnapshot()?.appSettings
+        let disabled = settings?.disabledCrashNotificationIDs ?? []
+        let autoRestartIDs = settings?.autoRestartEnabledIDs ?? []
         return ServiceEditorData(
             id: config.id,
             name: displayName(for: id),
@@ -331,7 +437,10 @@ final class PortsViewModel: ObservableObject {
             workingDirectory: config.workingDirectory ?? "",
             startCommand: commandLineString(from: config.startCommand),
             usesGlobalBrowser: config.preferredBrowserBundleID == nil,
-            browserBundleID: config.preferredBrowserBundleID
+            browserBundleID: config.preferredBrowserBundleID,
+            category: config.category ?? "",
+            notificationsEnabled: !disabled.contains(id),
+            autoRestartEnabled: autoRestartIDs.contains(id)
         )
     }
 
@@ -442,6 +551,48 @@ final class PortsViewModel: ObservableObject {
         refreshSoon(after: 350_000_000)
     }
 
+    func setNotificationsEnabled(_ enabled: Bool, for serviceID: String) {
+        do {
+            _ = try configStore.update { config in
+                if enabled {
+                    config.appSettings.disabledCrashNotificationIDs.remove(serviceID)
+                } else {
+                    config.appSettings.disabledCrashNotificationIDs.insert(serviceID)
+                }
+            }
+        } catch {
+            logger.error("Failed to update notification setting: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    func setAutoRestart(_ enabled: Bool, for serviceID: String) {
+        do {
+            _ = try configStore.update { config in
+                if enabled {
+                    config.appSettings.autoRestartEnabledIDs.insert(serviceID)
+                } else {
+                    config.appSettings.autoRestartEnabledIDs.remove(serviceID)
+                }
+            }
+        } catch {
+            logger.error("Failed to update auto-restart setting: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    func setProfileAutoStart(_ enabled: Bool) {
+        guard enabled != activeProfileAutoStart else { return }
+        do {
+            let updated = try configStore.update { config in
+                guard let index = config.profiles.firstIndex(where: { $0.id == self.activeProfileID }) else { return }
+                config.profiles[index].autoStartEnabled = enabled
+                config.profiles[index].updatedAt = ISO8601DateFormatter().string(from: Date())
+            }
+            applyActiveProfile(from: updated)
+        } catch {
+            logger.error("Failed to update auto-start: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     func switchProfile(_ profileID: String) {
         guard profileID != activeProfileID else { return }
 
@@ -468,6 +619,9 @@ final class PortsViewModel: ObservableObject {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw ServiceValidationError.profileNameRequired
+        }
+        guard ProGate.isAllowed(.unlimitedProfiles) || profileSummaries.count < ProGate.freeProfileLimit else {
+            throw ServiceValidationError.profileLimitReached
         }
 
         let profileID = "profile-\(UUID().uuidString.lowercased())"
@@ -499,6 +653,66 @@ final class PortsViewModel: ObservableObject {
             logger.error("Failed to create profile: \(error.localizedDescription, privacy: .public)")
             statusMessage = "Failed to create profile"
         }
+    }
+
+    // MARK: Export / Import
+
+    func exportActiveProfileData() -> Data? {
+        guard let snapshot = configStore.currentConfigSnapshot(),
+              let profile = snapshot.profiles.first(where: { $0.id == activeProfileID })
+        else { return nil }
+        let container = ProfileExportContainer(formatVersion: 1, profile: profile)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try? encoder.encode(container)
+    }
+
+    func importProfile(from data: Data) throws {
+        let decoder = JSONDecoder()
+        let container: ProfileExportContainer
+        do {
+            container = try decoder.decode(ProfileExportContainer.self, from: data)
+        } catch {
+            throw ServiceValidationError.invalidProfileFile
+        }
+
+        guard ProGate.isAllowed(.unlimitedProfiles) || profileSummaries.count < ProGate.freeProfileLimit else {
+            throw ServiceValidationError.profileLimitReached
+        }
+
+        let now = ISO8601DateFormatter().string(from: Date())
+        let newID = "profile-\(UUID().uuidString.lowercased())"
+        let imported = container.profile
+        let existingNames = profileSummaries.map(\.name)
+        let baseName = imported.name
+        var finalName = baseName
+        if existingNames.contains(finalName) {
+            finalName = "\(baseName) (Imported)"
+        }
+
+        let newProfile = AppProfile(
+            id: newID,
+            name: finalName,
+            serviceConfigurations: imported.serviceConfigurations,
+            customServiceNames: imported.customServiceNames,
+            createdAt: now,
+            updatedAt: now,
+            autoStartEnabled: imported.autoStartEnabled
+        )
+
+        let updated = try configStore.update { config in
+            config.profiles.append(newProfile)
+            config.selectedProfileID = newID
+        }
+        applyActiveProfile(from: updated)
+        didAttemptLaunchAutoStart = false
+        resetHealthTracking()
+        rebuildControllers()
+        serviceStates = serviceConfigurations.reduce(into: [:]) { result, config in
+            result[config.id] = .stopped
+        }
+        statusMessage = "Imported \"\(finalName)\""
+        refreshNow()
     }
 
     func renameActiveProfile(to name: String) throws {
@@ -563,12 +777,16 @@ final class PortsViewModel: ObservableObject {
 
     func updateService(
         id: String,
+        name: String = "",
         address: String,
         healthCheckURL: String,
         workingDirectory: String,
         startCommand: String,
         useGlobalBrowser: Bool,
-        selectedBrowserBundleID: String?
+        selectedBrowserBundleID: String?,
+        category: String? = nil,
+        notificationsEnabled: Bool = true,
+        autoRestart: Bool = false
     ) throws {
         guard let index = serviceConfigurations.firstIndex(where: { $0.id == id }) else { return }
         let current = serviceConfigurations[index]
@@ -608,6 +826,10 @@ final class PortsViewModel: ObservableObject {
             commandParts = parsed
         }
 
+        let normalizedCategory = category.flatMap {
+            let t = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.isEmpty ? nil : t
+        }
         let updated = ManagedServiceConfiguration(
             id: current.id,
             name: current.name,
@@ -620,14 +842,23 @@ final class PortsViewModel: ObservableObject {
                 useGlobalBrowser: useGlobalBrowser,
                 selectedBrowserBundleID: selectedBrowserBundleID
             ),
-            isBuiltIn: current.isBuiltIn
+            isBuiltIn: current.isBuiltIn,
+            category: normalizedCategory
         )
 
         serviceConfigurations[index] = updated
         rebuildControllers()
         resetHealthState(for: id)
-        persistActiveProfile()
 
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty {
+            renameService(id, to: trimmedName)
+        } else {
+            persistActiveProfile()
+        }
+
+        setNotificationsEnabled(notificationsEnabled, for: id)
+        setAutoRestart(autoRestart, for: id)
         statusMessage = "Updated \(displayName(for: id))"
         refreshNow()
     }
@@ -639,7 +870,8 @@ final class PortsViewModel: ObservableObject {
         workingDirectory: String,
         startCommand: String,
         useGlobalBrowser: Bool,
-        selectedBrowserBundleID: String?
+        selectedBrowserBundleID: String?,
+        category: String? = nil
     ) throws {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
@@ -684,6 +916,10 @@ final class PortsViewModel: ObservableObject {
             commandParts = parsed
         }
 
+        let addNormalizedCategory = category.flatMap {
+            let t = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.isEmpty ? nil : t
+        }
         let config = ManagedServiceConfiguration(
             id: "custom-\(UUID().uuidString.lowercased())",
             name: trimmedName,
@@ -696,7 +932,8 @@ final class PortsViewModel: ObservableObject {
                 useGlobalBrowser: useGlobalBrowser,
                 selectedBrowserBundleID: selectedBrowserBundleID
             ),
-            isBuiltIn: false
+            isBuiltIn: false,
+            category: addNormalizedCategory
         )
 
         serviceConfigurations.append(config)
@@ -706,6 +943,16 @@ final class PortsViewModel: ObservableObject {
         persistActiveProfile()
         statusMessage = "Added \(trimmedName)"
         refreshNow()
+    }
+
+    func moveService(fromID: String, toID: String) {
+        guard fromID != toID,
+              let fromIndex = serviceConfigurations.firstIndex(where: { $0.id == fromID }),
+              let toIndex   = serviceConfigurations.firstIndex(where: { $0.id == toID })
+        else { return }
+        let item = serviceConfigurations.remove(at: fromIndex)
+        serviceConfigurations.insert(item, at: toIndex)
+        persistActiveProfile()
     }
 
     func removeService(_ id: String) {
@@ -993,7 +1240,21 @@ final class PortsViewModel: ObservableObject {
     private func rebuildControllers() {
         var rebuilt: [String: ManagedServiceController] = [:]
         for config in serviceConfigurations where config.canStart {
-            rebuilt[config.id] = ManagedServiceController(configuration: config)
+            let controller = ManagedServiceController(configuration: config)
+            let capturedID = config.id
+            controller.onLogLine = { [weak self] line in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let timestamp = Self.logTimeFormatter.string(from: Date())
+                    var lines = self.serviceLogs[capturedID] ?? []
+                    lines.append("[\(timestamp)] \(line)")
+                    if lines.count > self.maxLogLines {
+                        lines.removeFirst(lines.count - self.maxLogLines)
+                    }
+                    self.serviceLogs[capturedID] = lines
+                }
+            }
+            rebuilt[config.id] = controller
         }
         controllers = rebuilt
     }
@@ -1022,6 +1283,7 @@ final class PortsViewModel: ObservableObject {
 
         activeProfileID = profile?.id ?? "default"
         activeProfileName = profile?.name ?? "Default"
+        activeProfileAutoStart = profile?.autoStartEnabled ?? true
         hasCompletedOnboarding = config.hasCompletedOnboarding
         requiresImportedStartApproval = false
         showProcessDetails = config.appSettings.showProcessDetails
@@ -1352,14 +1614,65 @@ final class PortsViewModel: ObservableObject {
                 if case .running = previousState {
                     let wasIntentional = userInitiatedStopIDs.remove(config.id) != nil
                     if !wasIntentional {
-                        sendUnexpectedStopNotification(for: config.name)
+                        sendUnexpectedStopNotification(serviceID: config.id, name: config.name)
+                        sendWebhookIfConfigured(serviceID: config.id, name: displayName(for: config.id), serviceURL: config.urlString)
+                        scheduleAutoRestartIfNeeded(config: config)
                     }
                 }
             }
         }
 
+        recordHistory(with: ports)
         refreshHealthChecks(with: ports)
         clearCompletedStartMessageIfNeeded()
+    }
+
+    private func recordHistory(with ports: [ListeningPort]) {
+        for config in serviceConfigurations {
+            let isRunning = ports.contains(where: { $0.port == config.port })
+            var history = serviceHistory[config.id] ?? []
+            history.append(isRunning)
+            if history.count > maxHistoryLength {
+                history = Array(history.suffix(maxHistoryLength))
+            }
+            serviceHistory[config.id] = history
+        }
+        historyFlushCounter += 1
+        if historyFlushCounter >= historyFlushInterval {
+            historyFlushCounter = 0
+            persistHistory()
+        }
+    }
+
+    // MARK: Persistent Health History
+
+    private func historyFileURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/com.localports.app", isDirectory: true)
+            .appendingPathComponent("history.v1.json", isDirectory: false)
+    }
+
+    private func loadPersistedHistory() {
+        guard ProGate.isAllowed(.persistentHistory) else { return }
+        let url = historyFileURL()
+        guard FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([String: [Bool]].self, from: data)
+        else { return }
+        for (id, history) in decoded {
+            serviceHistory[id] = Array(history.suffix(maxHistoryLength))
+        }
+    }
+
+    private func persistHistory() {
+        guard ProGate.isAllowed(.persistentHistory) else { return }
+        guard let data = try? JSONEncoder().encode(serviceHistory) else { return }
+        let url = historyFileURL()
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: url, options: .atomic)
     }
 
     private func clearCompletedStartMessageIfNeeded() {
@@ -1393,6 +1706,11 @@ final class PortsViewModel: ObservableObject {
     private func tryLaunchAutoStartIfNeeded() {
         guard !didAttemptLaunchAutoStart else { return }
         didAttemptLaunchAutoStart = true
+
+        guard activeProfileAutoStart else {
+            logger.debug("Launch auto-start skipped: disabled for this profile")
+            return
+        }
 
         let serviceIDsToStart = serviceConfigurations.compactMap { config -> String? in
             guard controllers[config.id] != nil else { return nil }
@@ -1710,7 +2028,8 @@ struct AppConfig: Codable, Equatable {
             healthCheckURLString: trimToNil(service.healthCheckURLString),
             startCommand: normalizeCommand(service.startCommand),
             preferredBrowserBundleID: trimToNil(service.preferredBrowserBundleID),
-            isBuiltIn: service.isBuiltIn
+            isBuiltIn: service.isBuiltIn,
+            category: trimToNil(service.category)
         )
     }
 
@@ -1736,6 +2055,48 @@ struct AppProfile: Codable, Equatable, Identifiable {
     var customServiceNames: [String: String]
     var createdAt: String
     var updatedAt: String
+    /// Whether services with start commands should auto-start on profile activation.
+    var autoStartEnabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, serviceConfigurations, customServiceNames, createdAt, updatedAt, autoStartEnabled
+    }
+
+    init(
+        id: String,
+        name: String,
+        serviceConfigurations: [ManagedServiceConfiguration],
+        customServiceNames: [String: String],
+        createdAt: String,
+        updatedAt: String,
+        autoStartEnabled: Bool = true
+    ) {
+        self.id = id
+        self.name = name
+        self.serviceConfigurations = serviceConfigurations
+        self.customServiceNames = customServiceNames
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.autoStartEnabled = autoStartEnabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        serviceConfigurations = try container.decode([ManagedServiceConfiguration].self, forKey: .serviceConfigurations)
+        customServiceNames = try container.decodeIfPresent([String: String].self, forKey: .customServiceNames) ?? [:]
+        createdAt = try container.decode(String.self, forKey: .createdAt)
+        updatedAt = try container.decode(String.self, forKey: .updatedAt)
+        autoStartEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoStartEnabled) ?? true
+    }
+}
+
+// MARK: - Profile Export/Import
+
+struct ProfileExportContainer: Codable {
+    let formatVersion: Int
+    let profile: AppProfile
 }
 
 struct PersistedAppSettings: Codable, Equatable {
@@ -1743,17 +2104,37 @@ struct PersistedAppSettings: Codable, Equatable {
     var requiresImportedStartApproval: Bool
     var showProcessDetails: Bool
     var preferredBrowserBundleID: String?
+    /// Service IDs for which crash notifications are silenced (Pro feature).
+    var disabledCrashNotificationIDs: Set<String>
+    /// Service IDs with auto-restart enabled (Pro feature).
+    var autoRestartEnabledIDs: Set<String>
+    /// Hex string for accent color override, e.g. "#9B59B6". nil = system default.
+    var accentColorHex: String?
+    /// Named background theme for the popover. nil = "Graphite" (default).
+    var backgroundThemeName: String?
+    /// Webhook URL for crash notifications (Pro feature). nil = disabled.
+    var webhookURL: String?
 
     init(
         launchInBackground: Bool,
         requiresImportedStartApproval: Bool = false,
         showProcessDetails: Bool = false,
-        preferredBrowserBundleID: String? = nil
+        preferredBrowserBundleID: String? = nil,
+        disabledCrashNotificationIDs: Set<String> = [],
+        autoRestartEnabledIDs: Set<String> = [],
+        accentColorHex: String? = nil,
+        backgroundThemeName: String? = nil,
+        webhookURL: String? = nil
     ) {
         self.launchInBackground = launchInBackground
         self.requiresImportedStartApproval = requiresImportedStartApproval
         self.showProcessDetails = showProcessDetails
         self.preferredBrowserBundleID = preferredBrowserBundleID
+        self.disabledCrashNotificationIDs = disabledCrashNotificationIDs
+        self.autoRestartEnabledIDs = autoRestartEnabledIDs
+        self.accentColorHex = accentColorHex
+        self.backgroundThemeName = backgroundThemeName
+        self.webhookURL = webhookURL
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1761,6 +2142,11 @@ struct PersistedAppSettings: Codable, Equatable {
         case requiresImportedStartApproval
         case showProcessDetails
         case preferredBrowserBundleID
+        case disabledCrashNotificationIDs
+        case autoRestartEnabledIDs
+        case accentColorHex
+        case backgroundThemeName
+        case webhookURL
     }
 
     init(from decoder: Decoder) throws {
@@ -1769,6 +2155,11 @@ struct PersistedAppSettings: Codable, Equatable {
         requiresImportedStartApproval = try container.decodeIfPresent(Bool.self, forKey: .requiresImportedStartApproval) ?? false
         showProcessDetails = try container.decodeIfPresent(Bool.self, forKey: .showProcessDetails) ?? false
         preferredBrowserBundleID = try container.decodeIfPresent(String.self, forKey: .preferredBrowserBundleID)
+        disabledCrashNotificationIDs = try container.decodeIfPresent(Set<String>.self, forKey: .disabledCrashNotificationIDs) ?? []
+        autoRestartEnabledIDs = try container.decodeIfPresent(Set<String>.self, forKey: .autoRestartEnabledIDs) ?? []
+        accentColorHex = try container.decodeIfPresent(String.self, forKey: .accentColorHex)
+        backgroundThemeName = try container.decodeIfPresent(String.self, forKey: .backgroundThemeName)
+        webhookURL = try container.decodeIfPresent(String.self, forKey: .webhookURL)
     }
 }
 
@@ -1961,6 +2352,10 @@ final class AppConfigStore {
 extension Notification.Name {
     static let localPortsConfigDidChange = Notification.Name("localPortsConfigDidChange")
     static let localPortsOpenSettingsRequested = Notification.Name("localPortsOpenSettingsRequested")
+    static let localPortsShowUpgradeRequested = Notification.Name("localPortsShowUpgradeRequested")
+    static let localPortsOpenAddServiceRequested = Notification.Name("localPortsOpenAddServiceRequested")
+    static let localPortsOpenEditServiceRequested = Notification.Name("localPortsOpenEditServiceRequested")
+    static let localPortsOpenServiceLogRequested = Notification.Name("localPortsOpenServiceLogRequested")
 }
 
 struct LegacyMigrationService {

@@ -1,28 +1,30 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PortsPopoverView: View {
     @ObservedObject var viewModel: PortsViewModel
 
     @State private var editingServiceID: String?
     @State private var renameDraft: String = ""
-    @State private var showAddServiceSheet = false
-    @State private var editingServiceData: PortsViewModel.ServiceEditorData?
     @State private var showCreateProfileSheet = false
     @State private var showRenameProfileSheet = false
     @State private var showDeleteProfileAlert = false
+    @State private var importErrorMessage: String?
+    @State private var showImportErrorAlert = false
     @FocusState private var renameFocused: Bool
+    @ObservedObject private var license = LicenseManager.shared
+    @ObservedObject private var settings = AppSettingsStore.shared
+    @State private var searchText: String = ""
+    @State private var scrollOffset: CGFloat = 0
+    @State private var contentHeight: CGFloat = 0
+    @State private var viewportHeight: CGFloat = 0
+    @State private var draggingID: String? = nil
+    @State private var dropTargetID: String? = nil
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.12, green: 0.14, blue: 0.20),
-                    Color(red: 0.08, green: 0.10, blue: 0.16)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+            settings.backgroundTheme.gradient
 
             VStack(alignment: .leading, spacing: 12) {
                 header
@@ -35,8 +37,23 @@ struct PortsPopoverView: View {
                     onboardingCard
                 }
 
-                ScrollView(.vertical, showsIndicators: true) {
-                    servicesSection
+                ZStack(alignment: .topTrailing) {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        servicesSection
+                            .padding(.trailing, 14)
+                            .background(
+                                ScrollOffsetReader(
+                                    scrollOffset: $scrollOffset,
+                                    contentHeight: $contentHeight,
+                                    viewportHeight: $viewportHeight
+                                )
+                            )
+                    }
+                    CustomScrollbarThumb(
+                        contentHeight: contentHeight,
+                        viewportHeight: viewportHeight,
+                        scrollOffset: scrollOffset
+                    )
                 }
 
                 footer
@@ -44,18 +61,6 @@ struct PortsPopoverView: View {
             .padding(14)
         }
         .frame(width: 468, height: 620)
-        .sheet(isPresented: $showAddServiceSheet) {
-            AddServiceSheet(
-                viewModel: viewModel,
-                isPresented: $showAddServiceSheet
-            )
-        }
-        .sheet(item: $editingServiceData) { data in
-            EditServiceSheet(
-                viewModel: viewModel,
-                serviceData: data
-            )
-        }
         .sheet(isPresented: $showCreateProfileSheet) {
             ProfileNameSheet(
                 title: "Create Profile",
@@ -82,6 +87,11 @@ struct PortsPopoverView: View {
         } message: {
             Text("This removes saved services in \"\(viewModel.activeProfileName)\". This action cannot be undone.")
         }
+        .alert("Import Failed", isPresented: $showImportErrorAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importErrorMessage ?? "Unknown error.")
+        }
     }
 
     private var header: some View {
@@ -103,6 +113,9 @@ struct PortsPopoverView: View {
                     Text("LocalPorts")
                         .font(.system(size: 28, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
+                    Text(appBuild)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.4))
                     #if DEBUG
                     Text("DEV")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -116,9 +129,28 @@ struct PortsPopoverView: View {
 
             Spacer()
 
-            Circle()
-                .fill(Color.white.opacity(0.18))
-                .frame(width: 8, height: 8)
+            if license.isProActive {
+                Text("PRO")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.black.opacity(0.75))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(settings.accentColor, in: RoundedRectangle(cornerRadius: 5))
+            } else {
+                Button("Upgrade to Pro") {
+                    NotificationCenter.default.post(name: .localPortsShowUpgradeRequested, object: nil)
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(settings.accentColor)
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(settings.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(settings.accentColor.opacity(0.35), lineWidth: 1)
+                )
+            }
         }
     }
 
@@ -156,9 +188,94 @@ struct PortsPopoverView: View {
             profileSection
             sectionTitle("Services")
 
-            ForEach(viewModel.serviceSnapshots) { service in
-                serviceCard(service)
+            if viewModel.serviceSnapshots.count >= 5 {
+                searchField
             }
+
+            if filteredSnapshots.isEmpty && !searchText.isEmpty {
+                Text("No results for \"\(searchText)\"")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.5))
+                    .padding(.horizontal, 10)
+            } else {
+                ForEach(groupedSnapshots, id: \.category) { group in
+                    if !group.category.isEmpty {
+                        Text(group.category.uppercased())
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.40))
+                            .tracking(0.8)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 2)
+                    }
+                    ForEach(group.services) { service in
+                        serviceCard(service)
+                            .opacity(draggingID == service.id ? 0.4 : 1)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.white.opacity(0.45), lineWidth: 2)
+                                    .opacity(dropTargetID == service.id && draggingID != service.id ? 1 : 0)
+                            )
+                            .onDrag {
+                                draggingID = service.id
+                                return NSItemProvider(object: service.id as NSString)
+                            }
+                            .onDrop(of: [UTType.plainText], delegate: ServiceDropDelegate(
+                                targetID: service.id,
+                                viewModel: viewModel,
+                                draggingID: $draggingID,
+                                dropTargetID: $dropTargetID
+                            ))
+                    }
+                }
+            }
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.45))
+            TextField("Filter services…", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.subheadline)
+                .foregroundStyle(.white)
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+        )
+    }
+
+    private var filteredSnapshots: [PortsViewModel.ServiceSnapshot] {
+        guard !searchText.isEmpty else { return viewModel.serviceSnapshots }
+        return viewModel.serviceSnapshots.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    private var groupedSnapshots: [(category: String, services: [PortsViewModel.ServiceSnapshot])] {
+        let snapshots = filteredSnapshots
+        var order: [String] = []
+        var seen = Set<String>()
+        for s in snapshots {
+            let key = s.category ?? ""
+            if !seen.contains(key) { seen.insert(key); order.append(key) }
+        }
+        return order.map { key in
+            (category: key, services: snapshots.filter { ($0.category ?? "") == key })
         }
     }
 
@@ -197,6 +314,16 @@ struct PortsPopoverView: View {
                     showDeleteProfileAlert = true
                 }
                 .disabled(viewModel.profileSummaries.count <= 1)
+
+                Divider()
+
+                Button("Export Profile…") {
+                    exportActiveProfile()
+                }
+
+                Button("Import Profile…") {
+                    importProfileFromFile()
+                }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "person.crop.circle")
@@ -216,6 +343,17 @@ struct PortsPopoverView: View {
             }
             .menuStyle(.borderlessButton)
             .buttonStyle(.plain)
+
+            Button {
+                viewModel.setProfileAutoStart(!viewModel.activeProfileAutoStart)
+            } label: {
+                Image(systemName: viewModel.activeProfileAutoStart ? "bolt.fill" : "bolt.slash")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(viewModel.activeProfileAutoStart ? 0.85 : 0.35))
+                    .frame(width: 26, height: 26)
+            }
+            .buttonStyle(.plain)
+            .help(viewModel.activeProfileAutoStart ? "Auto-start: On — services start automatically" : "Auto-start: Off")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
@@ -231,36 +369,57 @@ struct PortsPopoverView: View {
 
     private var footer: some View {
         HStack {
-            Button("Refresh") {
+            footerButton("Refresh", prominent: true) {
                 viewModel.refreshNow()
             }
-            .buttonStyle(.borderedProminent)
+            .keyboardShortcut("r", modifiers: .command)
 
-            Button {
+            footerIconButton("gearshape") {
                 NotificationCenter.default.post(name: .localPortsOpenSettingsRequested, object: nil)
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.subheadline.weight(.semibold))
             }
-            .buttonStyle(.bordered)
             .help("Settings")
 
-            Button {
-                showAddServiceSheet = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.subheadline.weight(.semibold))
+            footerIconButton("plus") {
+                NotificationCenter.default.post(name: .localPortsOpenAddServiceRequested, object: nil)
             }
-            .buttonStyle(.bordered)
+            .keyboardShortcut("n", modifiers: .command)
 
             Spacer()
 
-            Button("Quit") {
+            footerButton("Quit") {
                 NSApp.terminate(nil)
             }
-            .buttonStyle(.bordered)
+            .keyboardShortcut("q", modifiers: .command)
         }
-        .tint(.white.opacity(0.3))
+    }
+
+    private func footerButton(_ title: String, prominent: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.white.opacity(prominent ? 0.95 : 0.78))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.white.opacity(prominent ? 0.18 : 0.10))
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func footerIconButton(_ systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.78))
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.white.opacity(0.10))
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func sectionTitle(_ text: String) -> some View {
@@ -289,11 +448,20 @@ struct PortsPopoverView: View {
                         .help(viewModel.healthText(for: service.health))
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(verbatim: viewModel.primaryStatusSummary(for: service))
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.70))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                        HStack(spacing: 5) {
+                            Text(verbatim: viewModel.primaryStatusSummary(for: service))
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.70))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+
+                            if viewModel.isPortOccupiedExternally(service.id) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange.opacity(0.85))
+                                    .help("Port \(service.port) is in use by another process")
+                            }
+                        }
 
                         if let secondary = viewModel.secondaryStatusSummary(for: service) {
                             Text(verbatim: secondary)
@@ -364,6 +532,16 @@ struct PortsPopoverView: View {
                             beginEdit(service.id)
                         }
 
+                        if service.canStart {
+                            Button("View Logs…") {
+                                NotificationCenter.default.post(
+                                    name: .localPortsOpenServiceLogRequested,
+                                    object: nil,
+                                    userInfo: ["serviceID": service.id, "serviceName": service.name]
+                                )
+                            }
+                        }
+
                         Button("Force Stop", role: .destructive) {
                             viewModel.stopService(service.id, force: true)
                         }
@@ -386,6 +564,18 @@ struct PortsPopoverView: View {
                     .buttonStyle(.plain)
                 }
                 .frame(width: 125, alignment: .trailing)
+            }
+
+            if !service.recentHistory.isEmpty {
+                HStack(spacing: 2) {
+                    ForEach(Array(service.recentHistory.enumerated()), id: \.offset) { _, isUp in
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(isUp ? Color.green.opacity(0.55) : Color.white.opacity(0.15))
+                            .frame(width: 7, height: 3)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, 20)
             }
         }
         .padding(.horizontal, 10)
@@ -518,7 +708,16 @@ struct PortsPopoverView: View {
     }
 
     private func beginEdit(_ serviceID: String) {
-        editingServiceData = viewModel.serviceEditorData(for: serviceID)
+        NotificationCenter.default.post(
+            name: .localPortsOpenEditServiceRequested,
+            object: nil,
+            userInfo: ["serviceID": serviceID]
+        )
+    }
+
+    private var appBuild: String {
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        return "(\(build))"
     }
 
     private func appIconImage() -> NSImage? {
@@ -529,509 +728,44 @@ struct PortsPopoverView: View {
 
         return nil
     }
-}
 
-private struct AddServiceSheet: View {
-    private struct CommandPreset: Identifiable {
-        let id: String
-        let title: String
-        let command: String
-    }
-
-    @ObservedObject var viewModel: PortsViewModel
-    @Binding var isPresented: Bool
-
-    @State private var name: String = ""
-    @State private var address: String = "http://localhost:"
-    @State private var healthCheckURL: String = ""
-    @State private var workingDirectory: String = ""
-    @State private var startCommand: String = ""
-    @State private var useGlobalBrowser: Bool = true
-    @State private var selectedBrowserBundleID: String = ""
-    @State private var errorMessage: String?
-    @State private var validationMessage: String?
-    @State private var validationIsError = false
-    @State private var portConflictName: String?
-
-    private let presets: [CommandPreset] = [
-        CommandPreset(id: "npm-dev", title: "npm dev", command: "npm run dev"),
-        CommandPreset(id: "pnpm-dev", title: "pnpm dev", command: "pnpm dev"),
-        CommandPreset(id: "yarn-dev", title: "yarn dev", command: "yarn dev"),
-        CommandPreset(id: "node-server", title: "node server", command: "node server.js")
-    ]
-
-    private var browsers: [ActionsService.BrowserOption] {
-        viewModel.availableBrowsers()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Add Service Card")
-                .font(.title3.weight(.semibold))
-
-            field("Name", text: $name, placeholder: "My API")
-
-            VStack(alignment: .leading, spacing: 5) {
-                field("Address", text: $address, placeholder: "http://localhost:3000")
-                if let conflict = portConflictName {
-                    Label("Port already used by \(conflict)", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-            }
-            .onChange(of: address) { newValue in
-                let port = URL(string: newValue)?.port
-                portConflictName = port.flatMap { viewModel.conflictingServiceName(forPort: $0) }
-            }
-
-            field("Health Check URL (Optional)", text: $healthCheckURL, placeholder: "http://localhost:3000/health")
-            projectFolderField
-            field("Start Command (Optional)", text: $startCommand, placeholder: "npm run dev")
-            commandPresetBar
-            commandValidationRow
-            browserSection
-
-            Text("Start requires both Project Folder and Start Command.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-
-            HStack {
-                Button("Cancel") {
-                    isPresented = false
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Spacer()
-
-                Button("Add Card") {
-                    addService()
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(18)
-        .frame(width: 460)
-        .onAppear {
-            ensureBrowserSelection()
-        }
-        .onChange(of: useGlobalBrowser) { newValue in
-            if !newValue {
-                ensureBrowserSelection()
-            }
-        }
-    }
-
-    private var commandPresetBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(presets) { preset in
-                    Button(preset.title) {
-                        startCommand = preset.command
-                        errorMessage = nil
-                        validationMessage = nil
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            }
-        }
-    }
-
-    private var commandValidationRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Button("Test Command") {
-                    validateStartSetup()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-
-                Spacer()
-            }
-
-            if let validationMessage {
-                Text(validationMessage)
-                    .font(.caption)
-                    .foregroundStyle(validationIsError ? .red : .green)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private func field(_ title: String, text: Binding<String>, placeholder: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            TextField(placeholder, text: text)
-                .textFieldStyle(.roundedBorder)
-        }
-    }
-
-    private var projectFolderField: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("Project Folder (Optional)")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 8) {
-                TextField("/Users/you/project", text: $workingDirectory)
-                    .textFieldStyle(.roundedBorder)
-
-                Button("Browse...") {
-                    chooseProjectFolder()
-                }
-            }
-        }
-    }
-
-    private var browserSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Use browser from Settings", isOn: $useGlobalBrowser)
-                .font(.caption.weight(.semibold))
-
-            if !useGlobalBrowser {
-                if browsers.isEmpty {
-                    Text("No browsers were detected. Enable this toggle to use system/default behavior.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Picker("Browser for this service", selection: $selectedBrowserBundleID) {
-                        ForEach(browsers) { browser in
-                            Text(browser.name).tag(browser.bundleIdentifier)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                }
-            }
-        }
-    }
-
-    private func chooseProjectFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
+    private func exportActiveProfile() {
+        guard let data = viewModel.exportActiveProfileData() else { return }
+        let safeName = viewModel.activeProfileName
+            .components(separatedBy: .init(charactersIn: "/\\:*?\"<>|"))
+            .joined(separator: "-")
+        let panel = NSSavePanel()
+        panel.title = "Export Profile"
+        panel.nameFieldStringValue = "\(safeName).localports.json"
+        panel.allowedContentTypes = [.json]
         panel.canCreateDirectories = true
-        panel.prompt = "Select Folder"
-
-        if !workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            panel.directoryURL = URL(fileURLWithPath: workingDirectory)
-        }
-
+        NSApp.activate(ignoringOtherApps: true)
         if panel.runModal() == .OK, let url = panel.url {
-            workingDirectory = url.path
-        }
-    }
-
-    private func addService() {
-        guard useGlobalBrowser || !selectedBrowserBundleID.isEmpty else {
-            errorMessage = "Choose a browser for this service or enable browser from Settings."
-            return
-        }
-
-        do {
-            try viewModel.addCustomService(
-                name: name,
-                address: address,
-                healthCheckURL: healthCheckURL,
-                workingDirectory: workingDirectory,
-                startCommand: startCommand,
-                useGlobalBrowser: useGlobalBrowser,
-                selectedBrowserBundleID: useGlobalBrowser ? nil : selectedBrowserBundleID
-            )
-            isPresented = false
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func validateStartSetup() {
-        do {
-            let message = try viewModel.validateStartConfiguration(
-                workingDirectory: workingDirectory,
-                startCommand: startCommand
-            )
-            validationMessage = message
-            validationIsError = false
-            errorMessage = nil
-        } catch {
-            validationMessage = error.localizedDescription
-            validationIsError = true
-        }
-    }
-
-    private func ensureBrowserSelection() {
-        if selectedBrowserBundleID.isEmpty {
-            selectedBrowserBundleID = browsers.first?.bundleIdentifier ?? ""
-        }
-    }
-}
-
-private struct EditServiceSheet: View {
-    private struct CommandPreset: Identifiable {
-        let id: String
-        let title: String
-        let command: String
-    }
-
-    @ObservedObject var viewModel: PortsViewModel
-    let serviceData: PortsViewModel.ServiceEditorData
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var address: String
-    @State private var healthCheckURL: String
-    @State private var workingDirectory: String
-    @State private var startCommand: String
-    @State private var useGlobalBrowser: Bool
-    @State private var selectedBrowserBundleID: String
-    @State private var errorMessage: String?
-    @State private var validationMessage: String?
-    @State private var validationIsError = false
-    @State private var portConflictName: String?
-
-    private let presets: [CommandPreset] = [
-        CommandPreset(id: "npm-dev", title: "npm dev", command: "npm run dev"),
-        CommandPreset(id: "pnpm-dev", title: "pnpm dev", command: "pnpm dev"),
-        CommandPreset(id: "yarn-dev", title: "yarn dev", command: "yarn dev"),
-        CommandPreset(id: "node-server", title: "node server", command: "node server.js")
-    ]
-
-    private var browsers: [ActionsService.BrowserOption] {
-        viewModel.availableBrowsers()
-    }
-
-    init(viewModel: PortsViewModel, serviceData: PortsViewModel.ServiceEditorData) {
-        self.viewModel = viewModel
-        self.serviceData = serviceData
-        _address = State(initialValue: serviceData.address)
-        _healthCheckURL = State(initialValue: serviceData.healthCheckURL)
-        _workingDirectory = State(initialValue: serviceData.workingDirectory)
-        _startCommand = State(initialValue: serviceData.startCommand)
-        _useGlobalBrowser = State(initialValue: serviceData.usesGlobalBrowser)
-        _selectedBrowserBundleID = State(initialValue: serviceData.browserBundleID ?? "")
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Edit Service")
-                .font(.title3.weight(.semibold))
-
-            Text(serviceData.name)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 5) {
-                field("Address", text: $address, placeholder: "http://localhost:3000")
-                if let conflict = portConflictName {
-                    Label("Port already used by \(conflict)", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-            }
-            .onChange(of: address) { newValue in
-                let port = URL(string: newValue)?.port
-                portConflictName = port.flatMap {
-                    viewModel.conflictingServiceName(forPort: $0, excludingID: serviceData.id)
-                }
-            }
-
-            field("Health Check URL (Optional)", text: $healthCheckURL, placeholder: "http://localhost:3000/health")
-            projectFolderField
-            field("Start Command (Optional)", text: $startCommand, placeholder: "npm run dev")
-            commandPresetBar
-            commandValidationRow
-            browserSection
-
-            Text("Start requires both Project Folder and Start Command.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-
-            HStack {
-                Button("Cancel") {
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Spacer()
-
-                Button("Save") {
-                    save()
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(18)
-        .frame(width: 460)
-        .onAppear {
-            ensureBrowserSelection()
-        }
-        .onChange(of: useGlobalBrowser) { newValue in
-            if !newValue {
-                ensureBrowserSelection()
+            do {
+                try data.write(to: url)
+            } catch {
+                importErrorMessage = error.localizedDescription
+                showImportErrorAlert = true
             }
         }
     }
 
-    private var commandPresetBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(presets) { preset in
-                    Button(preset.title) {
-                        startCommand = preset.command
-                        errorMessage = nil
-                        validationMessage = nil
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            }
-        }
-    }
-
-    private var commandValidationRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Button("Test Command") {
-                    validateStartSetup()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-
-                Spacer()
-            }
-
-            if let validationMessage {
-                Text(validationMessage)
-                    .font(.caption)
-                    .foregroundStyle(validationIsError ? .red : .green)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private func field(_ title: String, text: Binding<String>, placeholder: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            TextField(placeholder, text: text)
-                .textFieldStyle(.roundedBorder)
-        }
-    }
-
-    private var projectFolderField: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("Project Folder (Optional)")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 8) {
-                TextField("/Users/you/project", text: $workingDirectory)
-                    .textFieldStyle(.roundedBorder)
-
-                Button("Browse...") {
-                    chooseProjectFolder()
-                }
-            }
-        }
-    }
-
-    private var browserSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Use browser from Settings", isOn: $useGlobalBrowser)
-                .font(.caption.weight(.semibold))
-
-            if !useGlobalBrowser {
-                if browsers.isEmpty {
-                    Text("No browsers were detected. Enable this toggle to use system/default behavior.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Picker("Browser for this service", selection: $selectedBrowserBundleID) {
-                        ForEach(browsers) { browser in
-                            Text(browser.name).tag(browser.bundleIdentifier)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                }
-            }
-        }
-    }
-
-    private func chooseProjectFolder() {
+    private func importProfileFromFile() {
         let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
+        panel.title = "Import Profile"
+        panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Select Folder"
-
-        if !workingDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            panel.directoryURL = URL(fileURLWithPath: workingDirectory)
-        }
-
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        NSApp.activate(ignoringOtherApps: true)
         if panel.runModal() == .OK, let url = panel.url {
-            workingDirectory = url.path
-        }
-    }
-
-    private func save() {
-        guard useGlobalBrowser || !selectedBrowserBundleID.isEmpty else {
-            errorMessage = "Choose a browser for this service or enable browser from Settings."
-            return
-        }
-
-        do {
-            try viewModel.updateService(
-                id: serviceData.id,
-                address: address,
-                healthCheckURL: healthCheckURL,
-                workingDirectory: workingDirectory,
-                startCommand: startCommand,
-                useGlobalBrowser: useGlobalBrowser,
-                selectedBrowserBundleID: useGlobalBrowser ? nil : selectedBrowserBundleID
-            )
-            dismiss()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func validateStartSetup() {
-        do {
-            let message = try viewModel.validateStartConfiguration(
-                workingDirectory: workingDirectory,
-                startCommand: startCommand
-            )
-            validationMessage = message
-            validationIsError = false
-            errorMessage = nil
-        } catch {
-            validationMessage = error.localizedDescription
-            validationIsError = true
-        }
-    }
-
-    private func ensureBrowserSelection() {
-        if selectedBrowserBundleID.isEmpty {
-            selectedBrowserBundleID = browsers.first?.bundleIdentifier ?? ""
+            do {
+                let data = try Data(contentsOf: url)
+                try viewModel.importProfile(from: data)
+            } catch {
+                importErrorMessage = error.localizedDescription
+                showImportErrorAlert = true
+            }
         }
     }
 }
@@ -1103,5 +837,102 @@ private struct ProfileNameSheet: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+// MARK: - Custom Scrollbar
+
+/// NSViewRepresentable that hooks into the parent NSScrollView for reliable scroll tracking.
+private struct ScrollOffsetReader: NSViewRepresentable {
+    @Binding var scrollOffset: CGFloat
+    @Binding var contentHeight: CGFloat
+    @Binding var viewportHeight: CGFloat
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard context.coordinator.observer == nil else { return }
+        DispatchQueue.main.async {
+            guard let sv = nsView.enclosingScrollView else { return }
+            self.viewportHeight = sv.documentVisibleRect.height
+            self.contentHeight  = sv.documentView?.frame.height ?? 0
+            context.coordinator.observer = NotificationCenter.default.addObserver(
+                forName: NSScrollView.didLiveScrollNotification,
+                object: sv,
+                queue: .main
+            ) { [weak sv] _ in
+                guard let sv else { return }
+                self.scrollOffset   = sv.documentVisibleRect.minY
+                self.contentHeight  = sv.documentView?.frame.height ?? 0
+                self.viewportHeight = sv.documentVisibleRect.height
+            }
+        }
+    }
+
+    class Coordinator {
+        var observer: Any?
+        deinit { if let obs = observer { NotificationCenter.default.removeObserver(obs) } }
+    }
+}
+
+private struct CustomScrollbarThumb: View {
+    let contentHeight: CGFloat
+    let viewportHeight: CGFloat
+    let scrollOffset: CGFloat   // positive, 0 at top
+
+    private var isNeeded: Bool { contentHeight > viewportHeight + 1 }
+
+    private var thumbHeight: CGFloat {
+        let ratio = viewportHeight / max(contentHeight, 1)
+        return max(28, viewportHeight * ratio)
+    }
+
+    private var thumbOffset: CGFloat {
+        let scrollable = contentHeight - viewportHeight
+        guard scrollable > 0 else { return 0 }
+        let progress = min(1, max(0, scrollOffset / scrollable))
+        return progress * (viewportHeight - thumbHeight)
+    }
+
+    var body: some View {
+        if isNeeded {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(Color.white.opacity(0.12))
+                .frame(width: 4, height: thumbHeight)
+                .offset(y: thumbOffset)
+                .padding(.trailing, 3)
+                .animation(.linear(duration: 0.05), value: thumbOffset)
+        }
+    }
+}
+
+// MARK: - Drag & Drop
+
+private struct ServiceDropDelegate: DropDelegate {
+    let targetID: String
+    let viewModel: PortsViewModel
+    @Binding var draggingID: String?
+    @Binding var dropTargetID: String?
+
+    func dropEntered(info: DropInfo) {
+        dropTargetID = targetID
+    }
+
+    func dropExited(info: DropInfo) {
+        if dropTargetID == targetID { dropTargetID = nil }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let fromID = draggingID else { return false }
+        viewModel.moveService(fromID: fromID, toID: targetID)
+        draggingID = nil
+        dropTargetID = nil
+        return true
     }
 }

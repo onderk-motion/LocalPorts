@@ -11,6 +11,32 @@ struct ManagedServiceConfiguration: Sendable, Codable, Hashable {
     let startCommand: [String]?
     let preferredBrowserBundleID: String?
     let isBuiltIn: Bool
+    /// Optional group label, e.g. "Frontend", "Backend", "Database". nil = uncategorized.
+    let category: String?
+
+    init(
+        id: String,
+        name: String,
+        workingDirectory: String?,
+        port: Int,
+        urlString: String,
+        healthCheckURLString: String?,
+        startCommand: [String]?,
+        preferredBrowserBundleID: String?,
+        isBuiltIn: Bool,
+        category: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.workingDirectory = workingDirectory
+        self.port = port
+        self.urlString = urlString
+        self.healthCheckURLString = healthCheckURLString
+        self.startCommand = startCommand
+        self.preferredBrowserBundleID = preferredBrowserBundleID
+        self.isBuiltIn = isBuiltIn
+        self.category = category
+    }
 
     var canStart: Bool {
         workingDirectory != nil && !(startCommand?.isEmpty ?? true)
@@ -71,6 +97,9 @@ final class ManagedServiceController {
     private let logger = Logger(subsystem: "com.localports.app", category: "ManagedServiceController")
     private let configuration: ManagedServiceConfiguration
     private var runningContext: RunningContext?
+
+    /// Called on background thread for each captured log line. Prefix "[err] " = stderr.
+    var onLogLine: ((String) -> Void)?
 
     init(configuration: ManagedServiceConfiguration) {
         self.configuration = configuration
@@ -170,6 +199,31 @@ final class ManagedServiceController {
         }
 
         logger.info("Started managed service \(self.configuration.name, privacy: .public)")
+        attachLogStreaming()
+    }
+
+    private func attachLogStreaming() {
+        guard let context = runningContext, onLogLine != nil else { return }
+
+        func streamPipe(_ pipe: Pipe, prefix: String) {
+            pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                let data = handle.availableData
+                guard !data.isEmpty else {
+                    handle.readabilityHandler = nil
+                    return
+                }
+                guard let text = String(data: data, encoding: .utf8) else { return }
+                let lines = text.components(separatedBy: "\n")
+                for line in lines {
+                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { continue }
+                    self?.onLogLine?(prefix + trimmed)
+                }
+            }
+        }
+
+        streamPipe(context.stdoutPipe, prefix: "")
+        streamPipe(context.stderrPipe, prefix: "[err] ")
     }
 
     @discardableResult
