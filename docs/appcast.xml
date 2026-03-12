@@ -8,18 +8,18 @@
     <language>en</language>
 
     <item>
-      <title>LocalPorts 2.0.0</title>
+      <title>LocalPorts 2.0.1</title>
       <sparkle:releaseNotesLink>
-        https://github.com/onderk-motion/LocalPorts/releases/tag/v2.0.0
+        https://github.com/onderk-motion/LocalPorts/releases/tag/v2.0.1
       </sparkle:releaseNotesLink>
-      <pubDate>Mon, 10 Mar 2026 00:00:00 +0000</pubDate>
+      <pubDate>Thu, 12 Mar 2026 00:00:00 +0000</pubDate>
       <enclosure
-        url="https://github.com/onderk-motion/LocalPorts/releases/download/v2.0.0/LocalPorts-2.0.0.dmg"
-        sparkle:version="47"
-        sparkle:shortVersionString="2.0.0"
+        url="https://github.com/onderk-motion/LocalPorts/releases/download/v2.0.1/LocalPorts-2.0.1.dmg"
+        sparkle:version="48"
+        sparkle:shortVersionString="2.0.1"
         type="application/octet-stream"
-        sparkle:edSignature="x905E4v13IL+boLjtkY6bEy/YrbrEPpknNOGQ4QXnwI5xX53efsPPgyCHsg5qZ8TNX/phV3yl+v4tSjkiAVrBQ=="
-        length="2657096"
+        sparkle:edSignature="465fM8K0ZSYwOllG4KuFWUqhslICFaGBPHWyhxfRSkqUa0vj0iAz2AcXVxoXpF9wctRSw3LNkn1jX330iUroBA=="
+        length="2668838"
       />
     </item>
 

@@ -8,9 +8,16 @@ LocalPorts is a macOS menu bar app that helps you manage local development servi
 
 **[→ Latest Release](https://github.com/onderk-motion/LocalPorts/releases/latest)**
 
-Download `LocalPorts-2.0.0.dmg`, open it, and drag LocalPorts to `/Applications`. The app is notarized — no additional steps needed.
+Download `LocalPorts-2.0.1.dmg`, open it, and drag LocalPorts to `/Applications`. The app is notarized — no additional steps needed.
 
 Requires macOS 13.0+.
+
+## What's New in v2.0.1
+
+- **Config persistence fix** — startup no longer falls back to a blank default config after a restart
+- **Cleaner local storage** — config files now live under `~/Library/Application Support/LocalPorts/`
+- **Background launch fix** — Start on Login now stays hidden in the menu bar instead of opening the UI on boot
+- **Cleaner header** — removed the build number badge from the main popover
 
 ## What's New in v2.0.0
 
@@ -76,8 +83,8 @@ Since v2.0.0 LocalPorts is notarized. If you're on an older build, right-click t
 
 | Path | Purpose |
 |------|---------|
-| `~/Library/Application Support/com.localports.app/config.v1.json` | Main config |
-| `~/Library/Application Support/com.localports.app/history.v1.json` | Health history |
+| `~/Library/Application Support/LocalPorts/config.v1.json` | Main config |
+| `~/Library/Application Support/LocalPorts/history.v1.json` | Health history |
 | `~/Library/Logs/LocalPorts/<service-id>.log` | Service logs |
 
 With iCloud Sync enabled (Pro), the config moves to `~/Library/Mobile Documents/iCloud~com~localports~app/Documents/config.v1.json`.
