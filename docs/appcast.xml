@@ -12,6 +12,20 @@
       <sparkle:releaseNotesLink>
         https://github.com/onderk-motion/LocalPorts/releases/tag/v2.0.1
       </sparkle:releaseNotesLink>
+      <sparkle:fullReleaseNotesLink>
+        https://github.com/onderk-motion/LocalPorts/releases/tag/v2.0.1
+      </sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown"><![CDATA[
+## Fixed
+
+- Fixed a configuration persistence issue where some Macs could reopen with a blank default config after restart.
+- Fixed Start on Login behavior so LocalPorts stays hidden in the menu bar instead of opening its UI on boot.
+
+## Changed
+
+- Moved local config storage to `~/Library/Application Support/LocalPorts/` for a cleaner, non-package folder layout.
+- Removed the build number badge from the main popover header.
+      ]]></description>
       <pubDate>Thu, 12 Mar 2026 00:00:00 +0000</pubDate>
       <enclosure
         url="https://github.com/onderk-motion/LocalPorts/releases/download/v2.0.1/LocalPorts-2.0.1.dmg"
