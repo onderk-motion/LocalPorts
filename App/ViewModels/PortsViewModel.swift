@@ -2,6 +2,67 @@ import Foundation
 import OSLog
 import UserNotifications
 
+enum AppRefreshMode: String, Codable, CaseIterable {
+    case balanced
+    case lowResource
+    case realtime
+
+    var title: String {
+        switch self {
+        case .balanced:
+            return "Balanced"
+        case .lowResource:
+            return "Low Resource"
+        case .realtime:
+            return "Realtime"
+        }
+    }
+
+    var detailText: String {
+        switch self {
+        case .balanced:
+            return "Recommended for most Macs."
+        case .lowResource:
+            return "Uses less CPU. Status updates can appear a bit later."
+        case .realtime:
+            return "Faster updates with higher CPU usage."
+        }
+    }
+
+    var pollInterval: TimeInterval {
+        switch self {
+        case .balanced:
+            return 2.0
+        case .lowResource:
+            return 5.0
+        case .realtime:
+            return 1.0
+        }
+    }
+
+    var healthCheckInterval: TimeInterval {
+        switch self {
+        case .balanced:
+            return 5.0
+        case .lowResource:
+            return 12.0
+        case .realtime:
+            return 3.0
+        }
+    }
+
+    var startVerificationPollIntervalNanoseconds: UInt64 {
+        switch self {
+        case .balanced:
+            return 650_000_000
+        case .lowResource:
+            return 1_200_000_000
+        case .realtime:
+            return 350_000_000
+        }
+    }
+}
+
 @MainActor
 final class PortsViewModel: ObservableObject {
     struct ServiceSnapshot: Identifiable {
@@ -13,6 +74,7 @@ final class PortsViewModel: ObservableObject {
         let state: ManagedServiceState
         let health: ServiceHealthState
         let canStart: Bool
+        let canOpenInBrowser: Bool
         let isBuiltIn: Bool
         /// Group label, e.g. "Frontend". nil = uncategorized.
         let category: String?
@@ -77,6 +139,7 @@ final class PortsViewModel: ObservableObject {
                 state: serviceStates[config.id] ?? .stopped,
                 health: healthStates[config.id] ?? .unavailable,
                 canStart: config.canStart,
+                canOpenInBrowser: canOpenInBrowser(urlString: config.urlString),
                 isBuiltIn: config.isBuiltIn,
                 category: config.category,
                 recentHistory: serviceHistory[config.id] ?? []
@@ -106,10 +169,9 @@ final class PortsViewModel: ObservableObject {
     private var userInitiatedStopIDs: Set<String> = []
     private var healthCheckTasks: [String: Task<Void, Never>] = [:]
     private var lastHealthCheckAt: [String: Date] = [:]
-    private let healthCheckInterval: TimeInterval = 5.0
     private let healthCheckTimeout: TimeInterval = 1.8
     private let startVerificationTimeout: TimeInterval = 12.0
-    private let startVerificationPollIntervalNanoseconds: UInt64 = 650_000_000
+    private var refreshMode: AppRefreshMode = .balanced
 
     private var serviceConfigurations: [ManagedServiceConfiguration] = []
     private var controllers: [String: ManagedServiceController] = [:]
@@ -130,9 +192,11 @@ final class PortsViewModel: ObservableObject {
         case invalidAddress
         case localhostOnly
         case missingPort
+        case unsupportedAddressScheme
         case invalidHealthAddress
         case healthLocalhostOnly
         case healthMissingPort
+        case unsupportedHealthAddressScheme
         case duplicatePort(Int)
         case startNeedsDirectory
         case directoryNeedsStartCommand
@@ -152,12 +216,16 @@ final class PortsViewModel: ObservableObject {
                 return "Only localhost, 127.0.0.1 or ::1 addresses are supported."
             case .missingPort:
                 return "Address must include an explicit port."
+            case .unsupportedAddressScheme:
+                return "Only http/https addresses are supported. Enable Experimental TCP Services in Settings for other protocols."
             case .invalidHealthAddress:
                 return "Health check address is invalid. Use localhost:PORT or http://localhost:PORT/health."
             case .healthLocalhostOnly:
                 return "Health check address must use localhost, 127.0.0.1 or ::1."
             case .healthMissingPort:
                 return "Health check address must include an explicit port."
+            case .unsupportedHealthAddressScheme:
+                return "Health check must use http or https."
             case .duplicatePort(let port):
                 return "Port \(port) is already pinned."
             case .startNeedsDirectory:
@@ -186,6 +254,7 @@ final class PortsViewModel: ObservableObject {
             defaultBuiltInServices: Self.defaultBuiltInServices,
             legacyCompatibilityUntilVersion: LegacyMigrationService.legacyCompatibilityUntilVersion
         )
+        refreshMode = config.appSettings.refreshMode
         applyActiveProfile(from: config)
         loadPersistedHistory()
         rebuildControllers()
@@ -222,11 +291,13 @@ final class PortsViewModel: ObservableObject {
 
     private func handleExternalConfigUpdate() {
         let previousProfileID = activeProfileID
+        let previousRefreshMode = refreshMode
 
         let config = configStore.loadOrCreateConfig(
             defaultBuiltInServices: Self.defaultBuiltInServices,
             legacyCompatibilityUntilVersion: LegacyMigrationService.legacyCompatibilityUntilVersion
         )
+        refreshMode = config.appSettings.refreshMode
         applyActiveProfile(from: config)
         rebuildControllers()
 
@@ -242,6 +313,10 @@ final class PortsViewModel: ObservableObject {
         if previousProfileID != activeProfileID {
             didAttemptLaunchAutoStart = false
             resetHealthTracking()
+        }
+
+        if previousRefreshMode != refreshMode {
+            restartAutoRefresh()
         }
 
         refreshNow()
@@ -284,6 +359,10 @@ final class PortsViewModel: ObservableObject {
 
     func clearServiceLogs(_ id: String) {
         serviceLogs[id] = nil
+    }
+
+    var experimentalTCPServicesEnabled: Bool {
+        appSettingsSnapshot().experimentalTCPServicesEnabled
     }
 
     private func scheduleAutoRestartIfNeeded(config: ManagedServiceConfiguration) {
@@ -407,6 +486,10 @@ final class PortsViewModel: ObservableObject {
 
     func openService(_ id: String) {
         guard let config = serviceConfiguration(for: id) else { return }
+        guard canOpenInBrowser(urlString: config.urlString) else {
+            statusMessage = "Open is only available for http/https services."
+            return
+        }
         ActionsService.shared.openInBrowser(
             urlString: config.urlString,
             browserBundleID: resolvedBrowserBundleID(for: config)
@@ -790,9 +873,19 @@ final class PortsViewModel: ObservableObject {
     ) throws {
         guard let index = serviceConfigurations.firstIndex(where: { $0.id == id }) else { return }
         let current = serviceConfigurations[index]
+        let appSettings = appSettingsSnapshot()
 
-        guard let normalizedURL = normalizeURLString(from: address) else {
+        guard let normalizedURL = normalizeURLString(
+            from: address,
+            allowExperimentalTCPServices: appSettings.experimentalTCPServicesEnabled
+        ) else {
             throw ServiceValidationError.invalidAddress
+        }
+        guard isSupportedServiceURLString(
+            normalizedURL,
+            allowExperimentalTCPServices: appSettings.experimentalTCPServicesEnabled
+        ) else {
+            throw ServiceValidationError.unsupportedAddressScheme
         }
         guard isLocalhostURLString(normalizedURL) else {
             throw ServiceValidationError.localhostOnly
@@ -877,9 +970,19 @@ final class PortsViewModel: ObservableObject {
         guard !trimmedName.isEmpty else {
             throw ServiceValidationError.nameRequired
         }
+        let appSettings = appSettingsSnapshot()
 
-        guard let normalizedURL = normalizeURLString(from: address) else {
+        guard let normalizedURL = normalizeURLString(
+            from: address,
+            allowExperimentalTCPServices: appSettings.experimentalTCPServicesEnabled
+        ) else {
             throw ServiceValidationError.invalidAddress
+        }
+        guard isSupportedServiceURLString(
+            normalizedURL,
+            allowExperimentalTCPServices: appSettings.experimentalTCPServicesEnabled
+        ) else {
+            throw ServiceValidationError.unsupportedAddressScheme
         }
 
         guard isLocalhostURLString(normalizedURL) else {
@@ -1036,24 +1139,7 @@ final class PortsViewModel: ObservableObject {
             let localPath = URL(fileURLWithPath: trimmedDirectory).appendingPathComponent(executable).path
             let localExists = FileManager.default.fileExists(atPath: localPath)
             if !localExists {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-                process.arguments = [executable]
-                process.standardOutput = Pipe()
-                process.standardError = Pipe()
-
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                } catch {
-                    throw NSError(
-                        domain: "PortsViewModel",
-                        code: 500,
-                        userInfo: [NSLocalizedDescriptionKey: "Could not validate command \(executable)"]
-                    )
-                }
-
-                if process.terminationStatus != 0 {
+                if !commandExistsInRuntimeEnvironment(executable: executable) {
                     throw NSError(
                         domain: "PortsViewModel",
                         code: 404,
@@ -1239,8 +1325,12 @@ final class PortsViewModel: ObservableObject {
 
     private func rebuildControllers() {
         var rebuilt: [String: ManagedServiceController] = [:]
+        let inheritShellEnvironment = appSettingsSnapshot().inheritShellEnvironment
         for config in serviceConfigurations where config.canStart {
-            let controller = ManagedServiceController(configuration: config)
+            let controller = ManagedServiceController(
+                configuration: config,
+                inheritShellEnvironment: inheritShellEnvironment
+            )
             let capturedID = config.id
             controller.onLogLine = { [weak self] line in
                 Task { @MainActor [weak self] in
@@ -1274,6 +1364,10 @@ final class PortsViewModel: ObservableObject {
         }
 
         return ordered
+    }
+
+    private func appSettingsSnapshot() -> PersistedAppSettings {
+        configStore.currentConfigSnapshot()?.appSettings ?? PersistedAppSettings(launchInBackground: true)
     }
 
     private func applyActiveProfile(from config: AppConfig) {
@@ -1415,7 +1509,30 @@ final class PortsViewModel: ObservableObject {
         return tokens
     }
 
-    private func normalizeURLString(from input: String) -> String? {
+    private func commandExistsInRuntimeEnvironment(executable: String) -> Bool {
+        let process = Process()
+        let command = "command -v \(shellEscapeForDisplay(executable)) >/dev/null 2>&1"
+        let inheritShellEnvironment = appSettingsSnapshot().inheritShellEnvironment
+        process.executableURL = URL(
+            fileURLWithPath: inheritShellEnvironment
+                ? ManagedCommandShell.preferredShellPath()
+                : "/bin/zsh"
+        )
+        process.arguments = inheritShellEnvironment ? ["-ilc", command] : ["-lc", command]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            logger.error("Command validation shell failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
+
+    private func normalizeURLString(from input: String, allowExperimentalTCPServices: Bool) -> String? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
@@ -1423,12 +1540,36 @@ final class PortsViewModel: ObservableObject {
         guard var components = URLComponents(string: candidate), components.scheme != nil, components.host != nil else {
             return nil
         }
+        guard components.scheme?.isEmpty == false else { return nil }
 
         if components.path == "/" {
             components.path = ""
         }
 
         return components.string
+    }
+
+    private func isSupportedScheme(_ scheme: String, allowExperimentalTCPServices: Bool) -> Bool {
+        switch scheme.lowercased() {
+        case "http", "https":
+            return true
+        default:
+            return allowExperimentalTCPServices
+        }
+    }
+
+    private func isSupportedServiceURLString(_ value: String, allowExperimentalTCPServices: Bool) -> Bool {
+        guard let scheme = URL(string: value)?.scheme?.lowercased() else { return false }
+        return isSupportedScheme(scheme, allowExperimentalTCPServices: allowExperimentalTCPServices)
+    }
+
+    private func isHTTPURLString(_ value: String) -> Bool {
+        guard let scheme = URL(string: value)?.scheme?.lowercased() else { return false }
+        return scheme == "http" || scheme == "https"
+    }
+
+    private func canOpenInBrowser(urlString: String) -> Bool {
+        isHTTPURLString(urlString)
     }
 
     private func isLocalhostURLString(_ value: String) -> Bool {
@@ -1440,8 +1581,11 @@ final class PortsViewModel: ObservableObject {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        guard let normalized = normalizeURLString(from: trimmed) else {
+        guard let normalized = normalizeURLString(from: trimmed, allowExperimentalTCPServices: false) else {
             throw ServiceValidationError.invalidHealthAddress
+        }
+        guard isHTTPURLString(normalized) else {
+            throw ServiceValidationError.unsupportedHealthAddressScheme
         }
         guard isLocalhostURLString(normalized) else {
             throw ServiceValidationError.healthLocalhostOnly
@@ -1469,8 +1613,16 @@ final class PortsViewModel: ObservableObject {
         }
     }
 
-    private func effectiveHealthURL(for config: ManagedServiceConfiguration) -> String {
-        config.healthCheckURLString ?? config.urlString
+    private func effectiveHealthURL(for config: ManagedServiceConfiguration) -> String? {
+        if let explicitHealthCheck = config.healthCheckURLString, isHTTPURLString(explicitHealthCheck) {
+            return explicitHealthCheck
+        }
+
+        if isHTTPURLString(config.urlString) {
+            return config.urlString
+        }
+
+        return nil
     }
 
     private func refreshHealthChecks(with ports: [ListeningPort]) {
@@ -1485,19 +1637,23 @@ final class PortsViewModel: ObservableObject {
                 continue
             }
 
+            guard let healthURL = effectiveHealthURL(for: config) else {
+                healthStates[serviceID] = .unavailable
+                continue
+            }
+
             if healthCheckTasks[serviceID] != nil {
                 continue
             }
 
             if let lastChecked = lastHealthCheckAt[serviceID],
-               now.timeIntervalSince(lastChecked) < healthCheckInterval {
+               now.timeIntervalSince(lastChecked) < refreshMode.healthCheckInterval {
                 continue
             }
 
             healthStates[serviceID] = .checking
             lastHealthCheckAt[serviceID] = now
 
-            let healthURL = effectiveHealthURL(for: config)
             healthCheckTasks[serviceID] = Task { [weak self] in
                 guard let self else { return }
                 let result = await self.performHealthCheck(urlString: healthURL)
@@ -1551,6 +1707,12 @@ final class PortsViewModel: ObservableObject {
         }
     }
 
+    private func restartAutoRefresh() {
+        refreshTimer?.cancel()
+        refreshTimer = nil
+        startAutoRefresh()
+    }
+
     private func beginStartVerification(for config: ManagedServiceConfiguration) {
         let serviceID = config.id
         let serviceName = config.name
@@ -1580,7 +1742,7 @@ final class PortsViewModel: ObservableObject {
                     return
                 }
 
-                try? await Task.sleep(nanoseconds: self.startVerificationPollIntervalNanoseconds)
+                try? await Task.sleep(nanoseconds: self.refreshMode.startVerificationPollIntervalNanoseconds)
             }
 
             if self.isRunning(serviceID) {
@@ -1693,7 +1855,8 @@ final class PortsViewModel: ObservableObject {
 
     private func startAutoRefresh() {
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-        timer.schedule(deadline: .now() + 2.0, repeating: 2.0)
+        let interval = refreshMode.pollInterval
+        timer.schedule(deadline: .now() + interval, repeating: interval)
         timer.setEventHandler {
             Task { @MainActor [weak self] in
                 self?.refreshNow()
@@ -2104,6 +2267,9 @@ struct PersistedAppSettings: Codable, Equatable {
     var requiresImportedStartApproval: Bool
     var showProcessDetails: Bool
     var preferredBrowserBundleID: String?
+    var refreshMode: AppRefreshMode
+    var inheritShellEnvironment: Bool
+    var experimentalTCPServicesEnabled: Bool
     /// Service IDs for which crash notifications are silenced (Pro feature).
     var disabledCrashNotificationIDs: Set<String>
     /// Service IDs with auto-restart enabled (Pro feature).
@@ -2120,6 +2286,9 @@ struct PersistedAppSettings: Codable, Equatable {
         requiresImportedStartApproval: Bool = false,
         showProcessDetails: Bool = false,
         preferredBrowserBundleID: String? = nil,
+        refreshMode: AppRefreshMode = .balanced,
+        inheritShellEnvironment: Bool = false,
+        experimentalTCPServicesEnabled: Bool = false,
         disabledCrashNotificationIDs: Set<String> = [],
         autoRestartEnabledIDs: Set<String> = [],
         accentColorHex: String? = nil,
@@ -2130,6 +2299,9 @@ struct PersistedAppSettings: Codable, Equatable {
         self.requiresImportedStartApproval = requiresImportedStartApproval
         self.showProcessDetails = showProcessDetails
         self.preferredBrowserBundleID = preferredBrowserBundleID
+        self.refreshMode = refreshMode
+        self.inheritShellEnvironment = inheritShellEnvironment
+        self.experimentalTCPServicesEnabled = experimentalTCPServicesEnabled
         self.disabledCrashNotificationIDs = disabledCrashNotificationIDs
         self.autoRestartEnabledIDs = autoRestartEnabledIDs
         self.accentColorHex = accentColorHex
@@ -2142,6 +2314,9 @@ struct PersistedAppSettings: Codable, Equatable {
         case requiresImportedStartApproval
         case showProcessDetails
         case preferredBrowserBundleID
+        case refreshMode
+        case inheritShellEnvironment
+        case experimentalTCPServicesEnabled
         case disabledCrashNotificationIDs
         case autoRestartEnabledIDs
         case accentColorHex
@@ -2155,6 +2330,9 @@ struct PersistedAppSettings: Codable, Equatable {
         requiresImportedStartApproval = try container.decodeIfPresent(Bool.self, forKey: .requiresImportedStartApproval) ?? false
         showProcessDetails = try container.decodeIfPresent(Bool.self, forKey: .showProcessDetails) ?? false
         preferredBrowserBundleID = try container.decodeIfPresent(String.self, forKey: .preferredBrowserBundleID)
+        refreshMode = try container.decodeIfPresent(AppRefreshMode.self, forKey: .refreshMode) ?? .balanced
+        inheritShellEnvironment = try container.decodeIfPresent(Bool.self, forKey: .inheritShellEnvironment) ?? false
+        experimentalTCPServicesEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalTCPServicesEnabled) ?? false
         disabledCrashNotificationIDs = try container.decodeIfPresent(Set<String>.self, forKey: .disabledCrashNotificationIDs) ?? []
         autoRestartEnabledIDs = try container.decodeIfPresent(Set<String>.self, forKey: .autoRestartEnabledIDs) ?? []
         accentColorHex = try container.decodeIfPresent(String.self, forKey: .accentColorHex)

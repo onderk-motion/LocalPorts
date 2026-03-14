@@ -1,5 +1,22 @@
+import Darwin
 import Foundation
 import OSLog
+
+enum ManagedCommandShell {
+    static func preferredShellPath() -> String {
+        if let shell = ProcessInfo.processInfo.environment["SHELL"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !shell.isEmpty {
+            return shell
+        }
+
+        guard let pw = getpwuid(getuid()), let shellPointer = pw.pointee.pw_shell else {
+            return "/bin/zsh"
+        }
+
+        let shell = String(cString: shellPointer).trimmingCharacters(in: .whitespacesAndNewlines)
+        return shell.isEmpty ? "/bin/zsh" : shell
+    }
+}
 
 struct ManagedServiceConfiguration: Sendable, Codable, Hashable {
     let id: String
@@ -96,13 +113,15 @@ final class ManagedServiceController {
 
     private let logger = Logger(subsystem: "com.localports.app", category: "ManagedServiceController")
     private let configuration: ManagedServiceConfiguration
+    private let inheritShellEnvironment: Bool
     private var runningContext: RunningContext?
 
     /// Called on background thread for each captured log line. Prefix "[err] " = stderr.
     var onLogLine: ((String) -> Void)?
 
-    init(configuration: ManagedServiceConfiguration) {
+    init(configuration: ManagedServiceConfiguration, inheritShellEnvironment: Bool = false) {
         self.configuration = configuration
+        self.inheritShellEnvironment = inheritShellEnvironment
     }
 
     func findRunningPID(in ports: [ListeningPort]) -> Int? {
@@ -142,8 +161,8 @@ final class ManagedServiceController {
         let command = shellCommandString()
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", command]
+        process.executableURL = URL(fileURLWithPath: shellPath())
+        process.arguments = shellArguments(for: command)
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
 
         let stdoutPipe = Pipe()
@@ -169,6 +188,7 @@ final class ManagedServiceController {
         if !process.isRunning {
             let stderr = String(decoding: stderrPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             let stdout = String(decoding: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            emitBufferedLogs(stdout: stdout, stderr: stderr)
             let terminationStatus = process.terminationStatus
             let diagnosticsPath = appendStartDiagnostics(
                 phase: terminationStatus == 0 ? "start-detached" : "start-failed",
@@ -226,6 +246,22 @@ final class ManagedServiceController {
         streamPipe(context.stderrPipe, prefix: "[err] ")
     }
 
+    private func emitBufferedLogs(stdout: String, stderr: String) {
+        guard let onLogLine else { return }
+
+        func emit(_ text: String, prefix: String) {
+            let lines = text.components(separatedBy: .newlines)
+            for line in lines {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                onLogLine(prefix + trimmed)
+            }
+        }
+
+        emit(stderr, prefix: "[err] ")
+        emit(stdout, prefix: "")
+    }
+
     @discardableResult
     func stop(using ports: [ListeningPort], force: Bool = false) -> Bool {
         guard let pid = findRunningPID(in: ports) else {
@@ -260,6 +296,14 @@ final class ManagedServiceController {
         let commandParts = resolvedCommandParts()
         let escaped = commandParts.map(shellEscape).joined(separator: " ")
         return "export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH:$PWD; \(escaped)"
+    }
+
+    private func shellPath() -> String {
+        inheritShellEnvironment ? ManagedCommandShell.preferredShellPath() : "/bin/zsh"
+    }
+
+    private func shellArguments(for command: String) -> [String] {
+        inheritShellEnvironment ? ["-ilc", command] : ["-lc", command]
     }
 
     private func resolvedCommandParts() -> [String] {

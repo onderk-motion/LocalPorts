@@ -35,6 +35,24 @@ final class AppSettingsStore: ObservableObject {
             persistPreferredBrowser()
         }
     }
+    @Published var refreshMode: AppRefreshMode = .balanced {
+        didSet {
+            guard !isSyncingFromConfig else { return }
+            persistRefreshMode()
+        }
+    }
+    @Published var inheritShellEnvironment: Bool = false {
+        didSet {
+            guard !isSyncingFromConfig else { return }
+            persistShellEnvironmentPreference()
+        }
+    }
+    @Published var experimentalTCPServicesEnabled: Bool = false {
+        didSet {
+            guard !isSyncingFromConfig else { return }
+            persistExperimentalTCPServicesPreference()
+        }
+    }
     /// Service IDs whose crash notifications are silenced. Pro feature.
     @Published var disabledCrashNotificationIDs: Set<String> = [] {
         didSet {
@@ -100,6 +118,9 @@ final class AppSettingsStore: ObservableObject {
         launchInBackground = config.appSettings.launchInBackground
         showProcessDetails = config.appSettings.showProcessDetails
         selectedBrowserBundleID = Self.trimmedOrNil(config.appSettings.preferredBrowserBundleID)
+        refreshMode = config.appSettings.refreshMode
+        inheritShellEnvironment = config.appSettings.inheritShellEnvironment
+        experimentalTCPServicesEnabled = config.appSettings.experimentalTCPServicesEnabled
         disabledCrashNotificationIDs = config.appSettings.disabledCrashNotificationIDs
         accentColorHex = config.appSettings.accentColorHex
         backgroundThemeName = config.appSettings.backgroundThemeName
@@ -308,6 +329,9 @@ final class AppSettingsStore: ObservableObject {
         launchInBackground = config.appSettings.launchInBackground
         showProcessDetails = config.appSettings.showProcessDetails
         selectedBrowserBundleID = Self.trimmedOrNil(config.appSettings.preferredBrowserBundleID)
+        refreshMode = config.appSettings.refreshMode
+        inheritShellEnvironment = config.appSettings.inheritShellEnvironment
+        experimentalTCPServicesEnabled = config.appSettings.experimentalTCPServicesEnabled
         disabledCrashNotificationIDs = config.appSettings.disabledCrashNotificationIDs
         accentColorHex = config.appSettings.accentColorHex
         backgroundThemeName = config.appSettings.backgroundThemeName
@@ -361,6 +385,36 @@ final class AppSettingsStore: ObservableObject {
             }
         } catch {
             logger.error("Failed to persist preferred browser: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func persistRefreshMode() {
+        do {
+            _ = try configStore.update { config in
+                config.appSettings.refreshMode = refreshMode
+            }
+        } catch {
+            logger.error("Failed to persist refresh mode: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func persistShellEnvironmentPreference() {
+        do {
+            _ = try configStore.update { config in
+                config.appSettings.inheritShellEnvironment = inheritShellEnvironment
+            }
+        } catch {
+            logger.error("Failed to persist shell environment preference: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func persistExperimentalTCPServicesPreference() {
+        do {
+            _ = try configStore.update { config in
+                config.appSettings.experimentalTCPServicesEnabled = experimentalTCPServicesEnabled
+            }
+        } catch {
+            logger.error("Failed to persist experimental TCP preference: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -849,13 +903,14 @@ final class StatusBarController: NSObject {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, appearance, notifications, license, data, guide
+    case general, appearance, advanced, notifications, license, data, guide
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .general:       return "General"
         case .appearance:    return "Appearance"
+        case .advanced:      return "Advanced"
         case .notifications: return "Notifications"
         case .license:       return "License"
         case .data:          return "Data"
@@ -867,6 +922,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general:       return "gearshape"
         case .appearance:    return "paintpalette"
+        case .advanced:      return "slider.horizontal.3"
         case .notifications: return "bell"
         case .license:       return "key"
         case .data:          return "externaldrive"
@@ -902,6 +958,8 @@ struct SettingsPanelView: View {
                     GeneralTabView(settings: settings)
                 case .appearance:
                     AppearanceTabView(settings: settings)
+                case .advanced:
+                    AdvancedTabView(settings: settings)
                 case .notifications:
                     NotificationsTabView(settings: settings)
                 case .license:
@@ -1090,6 +1148,63 @@ private struct AppearanceTabView: View {
                 NotificationCenter.default.post(name: .localPortsShowUpgradeRequested, object: nil)
             }
             .buttonStyle(.bordered).controlSize(.mini)
+        }
+    }
+}
+
+private struct AdvancedTabView: View {
+    @ObservedObject var settings: AppSettingsStore
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                GroupBox("Performance") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("Refresh mode", selection: $settings.refreshMode) {
+                            ForEach(AppRefreshMode.allCases, id: \.self) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        Text(settings.refreshMode.detailText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text("This affects background port scans, health checks, and start verification speed.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                GroupBox("Command Environment") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Inherit interactive shell environment", isOn: $settings.inheritShellEnvironment)
+                        Text("Helps with nvm, fnm, asdf, mise, and similar setups by launching commands through your shell profile.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("Experimental: shell startup scripts can add delay or unexpected output on some Macs.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                GroupBox("Experimental Services") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Enable TCP / database services", isOn: $settings.experimentalTCPServicesEnabled)
+                        Text("Allows non-http localhost URLs such as tcp:// or postgres://. Web-only behavior stays unchanged when this is off.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("Browser open actions remain limited to http/https services.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(20)
         }
     }
 }
@@ -1390,7 +1505,7 @@ private struct LicenseSectionView: View {
                             .font(.subheadline.weight(.semibold))
                     }
 
-                    if let key = license.storedLicenseKey() {
+                    if let key = LicenseManager.shared.storedLicenseKey() {
                         Text(maskedKey(key))
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)

@@ -481,6 +481,8 @@ struct PortsPopoverView: View {
                         viewModel.openService(service.id)
                     }
                     .help("Open")
+                    .disabled(!service.canOpenInBrowser)
+                    .opacity(service.canOpenInBrowser ? 1 : 0.45)
 
                     iconButton(systemName: "doc.on.doc") {
                         viewModel.copyServiceURL(service.id)

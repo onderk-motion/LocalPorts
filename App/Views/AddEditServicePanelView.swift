@@ -12,6 +12,7 @@ enum AddEditServiceMode {
 
 struct AddEditServicePanelView: View {
     @ObservedObject var viewModel: PortsViewModel
+    @ObservedObject private var settings = AppSettingsStore.shared
     let mode: AddEditServiceMode
     let onDismiss: () -> Void
 
@@ -126,6 +127,7 @@ struct AddEditServicePanelView: View {
         }
         .frame(width: 460)
         .onAppear {
+            settings.refreshAvailableBrowsers()
             ensureBrowserSelection()
         }
         .onChange(of: useGlobalBrowser) { newValue in
@@ -204,6 +206,11 @@ struct AddEditServicePanelView: View {
                                     }
                                 }
                             }
+                        if settings.experimentalTCPServicesEnabled {
+                            Text("Experimental TCP mode is on. Use an explicit scheme like tcp://localhost:5432 or postgres://localhost:5432 for non-web services.")
+                                .font(.caption)
+                                .foregroundStyle(hintColor)
+                        }
                         if let conflict = portConflictName {
                             Label("Port already used by \(conflict)", systemImage: "exclamationmark.triangle.fill")
                                 .font(.caption)
@@ -575,7 +582,7 @@ struct AddEditServicePanelView: View {
     }
 
     private var browsers: [ActionsService.BrowserOption] {
-        viewModel.availableBrowsers()
+        settings.availableBrowsers
     }
 
     private struct CommandPreset: Identifiable {

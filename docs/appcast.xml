@@ -8,32 +8,33 @@
     <language>en</language>
 
     <item>
-      <title>LocalPorts 2.0.1</title>
+      <title>LocalPorts 2.0.2</title>
       <sparkle:releaseNotesLink>
-        https://github.com/onderk-motion/LocalPorts/releases/tag/v2.0.1
+        https://github.com/onderk-motion/LocalPorts/releases/tag/v2.0.2
       </sparkle:releaseNotesLink>
       <sparkle:fullReleaseNotesLink>
-        https://github.com/onderk-motion/LocalPorts/releases/tag/v2.0.1
+        https://github.com/onderk-motion/LocalPorts/releases/tag/v2.0.2
       </sparkle:fullReleaseNotesLink>
       <description sparkle:format="markdown"><![CDATA[
 ## Fixed
 
-- Fixed a configuration persistence issue where some Macs could reopen with a blank default config after restart.
-- Fixed Start on Login behavior so LocalPorts stays hidden in the menu bar instead of opening its UI on boot.
+- Fixed fast-fail managed services so the log panel now shows buffered stdout and stderr instead of staying empty.
 
 ## Changed
 
-- Moved local config storage to `~/Library/Application Support/LocalPorts/` for a cleaner, non-package folder layout.
-- Removed the build number badge from the main popover header.
+- Added an `Advanced` settings tab with refresh mode, shell environment inheritance, and experimental TCP service options.
+- Added `Balanced`, `Low Resource`, and `Realtime` refresh profiles to better control background polling.
+- Added an optional interactive shell environment mode for `nvm`, `asdf`, `fnm`, and similar toolchains.
+- Added optional experimental TCP/database service support while keeping the default HTTP-first flow unchanged.
       ]]></description>
-      <pubDate>Thu, 12 Mar 2026 00:00:00 +0000</pubDate>
+      <pubDate>Sat, 14 Mar 2026 00:00:00 +0000</pubDate>
       <enclosure
-        url="https://github.com/onderk-motion/LocalPorts/releases/download/v2.0.1/LocalPorts-2.0.1.dmg"
-        sparkle:version="48"
-        sparkle:shortVersionString="2.0.1"
+        url="https://github.com/onderk-motion/LocalPorts/releases/download/v2.0.2/LocalPorts-2.0.2.dmg"
+        sparkle:version="49"
+        sparkle:shortVersionString="2.0.2"
         type="application/octet-stream"
-        sparkle:edSignature="465fM8K0ZSYwOllG4KuFWUqhslICFaGBPHWyhxfRSkqUa0vj0iAz2AcXVxoXpF9wctRSw3LNkn1jX330iUroBA=="
-        length="2668838"
+        sparkle:edSignature="Pdpfc3gUabhLNGBZrVudpODpL/zhmXNz0pNDu+XVyruOCgaimO1v0X/A2OEtDHOCstT8cpwhn1X3c53fvLVFBQ=="
+        length="2695590"
       />
     </item>
 

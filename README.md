@@ -8,9 +8,17 @@ LocalPorts is a macOS menu bar app that helps you manage local development servi
 
 **[→ Latest Release](https://github.com/onderk-motion/LocalPorts/releases/latest)**
 
-Download `LocalPorts-2.0.1.dmg`, open it, and drag LocalPorts to `/Applications`. The app is notarized — no additional steps needed.
+Download `LocalPorts-2.0.2.dmg`, open it, and drag LocalPorts to `/Applications`. The app is notarized — no additional steps needed.
 
 Requires macOS 13.0+.
+
+## What's New in v2.0.2
+
+- **Fast-fail logs** — services that exit immediately now surface their last stdout/stderr lines in the log panel instead of showing an empty view
+- **Advanced settings** — added a dedicated tab for technical options that should stay off the happy path for most users
+- **Refresh mode control** — choose between `Balanced`, `Low Resource`, and `Realtime` refresh behavior depending on CPU sensitivity
+- **Shell environment option** — optionally inherit the user's login shell environment for `nvm`, `asdf`, `fnm`, `mise`, and similar setups
+- **Experimental TCP services** — optionally allow non-HTTP localhost services such as database ports without changing the default web-focused flow
 
 ## What's New in v2.0.1
 
