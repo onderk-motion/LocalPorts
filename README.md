@@ -12,36 +12,6 @@ Download `LocalPorts-2.0.2.dmg`, open it, and drag LocalPorts to `/Applications`
 
 Requires macOS 13.0+.
 
-## What's New in v2.0.2
-
-- **Fast-fail logs** — services that exit immediately now surface their last stdout/stderr lines in the log panel instead of showing an empty view
-- **Advanced settings** — added a dedicated tab for technical options that should stay off the happy path for most users
-- **Refresh mode control** — choose between `Balanced`, `Low Resource`, and `Realtime` refresh behavior depending on CPU sensitivity
-- **Shell environment option** — optionally inherit the user's login shell environment for `nvm`, `asdf`, `fnm`, `mise`, and similar setups
-- **Experimental TCP services** — optionally allow non-HTTP localhost services such as database ports without changing the default web-focused flow
-
-## What's New in v2.0.1
-
-- **Config persistence fix** — startup no longer falls back to a blank default config after a restart
-- **Cleaner local storage** — config files now live under `~/Library/Application Support/LocalPorts/`
-- **Background launch fix** — Start on Login now stays hidden in the menu bar instead of opening the UI on boot
-- **Cleaner header** — removed the build number badge from the main popover
-
-## What's New in v2.0.0
-
-- **Managed services** — start, stop, restart, and force-stop services directly from the menu bar
-- **Service log viewer** — stream stdout/stderr output in a live log panel
-- **Auto-restart** — automatically restart a service if it stops unexpectedly *(Pro)*
-- **Service categories** — group services with custom labels *(Pro)*
-- **Health history** — persistent status history bar per service *(Pro)*
-- **Advanced notifications** — per-service crash notification toggle *(Pro)*
-- **Webhook notifications** — send alerts to Slack, Discord, Teams, or custom URLs *(Pro)*
-- **iCloud Sync** — sync your config across Macs *(Pro)*
-- **Export / Import profiles** — back up and restore service configurations *(Pro)*
-- **Sparkle auto-updates** — get notified of new releases in-app
-- **Port conflict detection** — inline warning when a port is already in use
-- **Multiple profiles** — group services per project or context
-
 ## Free vs Pro
 
 | Feature | Free | Pro |
@@ -74,6 +44,36 @@ Requires macOS 13.0+.
 - **Right-click** the icon to access Settings and Quit.
 - **Footer buttons**: Refresh, Settings, Add service (`+`), Quit.
 - **Card actions**: Open in browser, Copy URL, Start/Stop, View logs, Edit, Remove.
+
+## What's New in v2.0.2
+
+- **Fast-fail logs** — services that exit immediately now surface their last stdout/stderr lines in the log panel instead of showing an empty view
+- **Advanced settings** — added a dedicated tab for technical options that should stay off the happy path for most users
+- **Refresh mode control** — choose between `Balanced`, `Low Resource`, and `Realtime` refresh behavior depending on CPU sensitivity
+- **Shell environment option** — optionally inherit the user's login shell environment for `nvm`, `asdf`, `fnm`, `mise`, and similar setups
+- **Experimental TCP services** — optionally allow non-HTTP localhost services such as database ports without changing the default web-focused flow
+
+## What's New in v2.0.1
+
+- **Config persistence fix** — startup no longer falls back to a blank default config after a restart
+- **Cleaner local storage** — config files now live under `~/Library/Application Support/LocalPorts/`
+- **Background launch fix** — Start on Login now stays hidden in the menu bar instead of opening the UI on boot
+- **Cleaner header** — removed the build number badge from the main popover
+
+## What's New in v2.0.0
+
+- **Managed services** — start, stop, restart, and force-stop services directly from the menu bar
+- **Service log viewer** — stream stdout/stderr output in a live log panel
+- **Auto-restart** — automatically restart a service if it stops unexpectedly *(Pro)*
+- **Service categories** — group services with custom labels *(Pro)*
+- **Health history** — persistent status history bar per service *(Pro)*
+- **Advanced notifications** — per-service crash notification toggle *(Pro)*
+- **Webhook notifications** — send alerts to Slack, Discord, Teams, or custom URLs *(Pro)*
+- **iCloud Sync** — sync your config across Macs *(Pro)*
+- **Export / Import profiles** — back up and restore service configurations *(Pro)*
+- **Sparkle auto-updates** — get notified of new releases in-app
+- **Port conflict detection** — inline warning when a port is already in use
+- **Multiple profiles** — group services per project or context
 
 ## Common Issues
 
